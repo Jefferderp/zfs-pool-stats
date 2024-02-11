@@ -41,33 +41,38 @@ def shell(cmdline):
 # In case the output sequence from any of these underlying commands ever changes in a future version,
 # this dictionary will become misaligned, and require a re-evaluation of each underlying command.
 
-stats_keys = ["pName", "pCapLogicUsed", "pCapLogicFree", "pOpsRead", "pOpsWrite", "pBwRead", "pBwWrite",
+stats_keys = ("pName", "pCapLogicUsed", "pCapLogicFree", "pOpsRead", "pOpsWrite", "pBwRead", "pBwWrite",
               "pTotalwaitRead", "pTotalwaitWrite", "pDiskwaitRead", "pDiskwaitWrite", "pSyncqwaitRead",
               "pSyncqwaitWrite", "pAsyncqwaitRead", "pAsyncqwaitWrite", "pScrubWait", "pTrimWait",
               "pCapVirtUsed", "pCapVirtFree", "pCapCompPerc", "pCapUsedBychilds", "pCapUsedBysnapshots",
-              "pStateHealth", "pStateFrag", "pStateText"]
+              "pStateHealth", "pStateFrag", "pStateText")
 
 stats_vals = []
+
 stats_vals.extend(["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325",
-                   "0", "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"])  # shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
-# shell("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
+                   "0", "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"])
+# shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
+
 stats_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
+# shell("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
+
 # TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
 #       all snapshots sizes (`-r`) and summing them (`awk`) before returning.
 #       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
 #       Parsing and addition should be performed locally.
-# shell("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
 stats_vals.extend(["1381425606656"])
-stats_vals.extend(["ONLINE", "20%"])  # shell("zpool list -H -o health,frag " + POOL_NAME)
+# shell("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
+
+stats_vals.extend(["ONLINE", "20%"])
+# shell("zpool list -H -o health,frag " + POOL_NAME)
+
 # TODO: Clean up this `zpool status` command and perform text parsing locally instead.
+stats_vals.extend(["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
 # shell("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
-stats_vals.extend(
-    ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
 
-print("statskeys\n", stats_keys)
-print("statsvals\n", stats_vals)
-
+# Merge key and values lists into a dictionary
 stats = dict(zip(stats_keys, stats_vals))
 
+# Print them out for visual inspection
 for key, value in stats.items():
     print(f"{key} : {value}")
