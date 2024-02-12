@@ -1,5 +1,6 @@
 #! python3
 import subprocess
+import time
 
 # TODO FEATURES:
 # * Repeated output in aligned columns with automatic minimum width
@@ -10,19 +11,24 @@ import subprocess
 # * An -p flag to specify the pool name
 # * An -t flag to specify the iteration frequency
 # * Use first line of `zpool iostat` (without -y) to get statistics since boot, and display as the last line (sticky)
-# * Implement multiple simultaneous pool outputs (`zpool iostat` can do this in a single run)
 # * Implement color codes for pool state health
+# * A brief warning if the user specifies a REPEAT_DELAY < 1
+# * Add internal delays of between 5 and 15 seconds for any relatively stable values, which are highly unlikely
+#       to change drastically in a brief time window. These are:
+#       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
+#       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
+# * Implement multiple simultaneous pool outputs
 
 ### Define constants ###
-# TODO: Get this as an argument
-POOL_NAME = "amalgm"
+POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
 # Repeat delay also affects the sampling time of some commands like `zpool iostat`.
 # A sampling time of at least 1 second is ideal for accurate statistics.
-# TODO: Get this as an argument. The user should be able to enter "1", "1.0", "0.5", etc.
-REPEAT_DELAY = "1.0"
+REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
 
 
-# TODO: Change this function to run commands locally, once this script is complete.
+######## Begin function definitions ########
+
+# TODO: Change this function to run commands locally, once the script is ready.
 def shell(cmdline):
     """Run shell commands via SSH and return output (stdout or stderr).
     (cmdline) is the command line to run."""
@@ -37,7 +43,7 @@ def shell(cmdline):
 
 
 def str_to_float(value):
-    """Attempt to convert (value) from string to float. If unable, return original string."""
+    """Convert eligible strings to floats. Return original string when unable."""
     try:
         value = value.strip('-%')  # Remove undesired chars
         return float(value) if value else 0  # Convert eligible strings to floats. Convert empty strings to 0.
@@ -46,62 +52,70 @@ def str_to_float(value):
 
 
 def print_struct(struct):
-    """Print out a struct (dict, list or tuple), in both pretty and original format."""
+    """Pretty-print a struct (dict/list/tuple) in line-delimited "key : value" format."""
     for key, value in struct.items():
         print(f"{key} : {value}")
-    print("")  # Newline
-    print(struct)
 
 
-### Ingest data from `iostat`, `zfs get`, `zpool status` ###
-# Starting from ["Name"], the values of `zpool iostat` are assigned
-# Starting from ["VirtCapUsed"], the values of `zfs get` are assigned
-# Starting from ["StateHealth"], the values of `zfs get` (again) are assigned
-# Starting from ["StateText"], the values of `zpool status` are assigned
-# NOTE: In case the output sequence from any of these underlying commands ever changes in a future version,
-#       this dictionary will become misaligned, and require a re-evaluation of each underlying command.
-zpool_keys = ("Name", "LogicCapUsed", "LogicCapFree", "OpsRead", "OpsWrite", "BwRead", "BwWrite",
-              "TotalwaitRead", "TotalwaitWrite", "DiskwaitRead", "DiskwaitWrite", "SyncqwaitRead",
-              "SyncqwaitWrite", "AsyncqwaitRead", "AsyncqwaitWrite", "ScrubWait", "TrimWait",
-              "VirtCapUsed", "VirtCapFree", "VirtCompRatio", "VirtCapUsedByChilds", "VirtCapUsedBySnaps",
-              "StateHealth", "StateFrag", "StateText")
+def get_stats():
+    """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
+    Return a dictionary of ZFS pool statistics, formatted as strings and floats."""
 
-zpool_vals = (["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325",
-               "0", "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"])
-# shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
+    # NOTE: In case the output sequence from any of these underlying commands ever changes in a future version,
+    #       the keys and values in this dictionary will be misaligned, requiring source code adjustment.
 
-zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
-# shell("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
+    #           Starting from ["Name"], the values of `zpool iostat` are assigned
+    #           Starting from ["VirtCapUsed"], the values of `zfs get` are assigned
+    #           Starting from ["StateHealth"], the values of `zfs get` (again) are assigned
+    #           Starting from ["StateText"], the values of `zpool status` are assigned
+    zpool_keys = ("Name", "LogicCapUsed", "LogicCapFree", "OpsRead", "OpsWrite", "BwRead", "BwWrite",
+                  "TotalwaitRead", "TotalwaitWrite", "DiskwaitRead", "DiskwaitWrite", "SyncqwaitRead",
+                  "SyncqwaitWrite", "AsyncqwaitRead", "AsyncqwaitWrite", "ScrubWait", "TrimWait",
+                  "VirtCapUsed", "VirtCapFree", "VirtCompRatio", "VirtCapUsedByChilds", "VirtCapUsedBySnaps",
+                  "StateHealth", "StateFrag", "StateText")
 
-# TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
-#       all snapshots sizes (`-r`) and summing them (`awk`) before returning. Alternative?
-#       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
-#       Parsing and addition should be performed locally.
-zpool_vals.extend(["1381425606656"])
-# shell("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
+    zpool_vals = (["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
+                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"])
+    # shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
 
-zpool_vals.extend(["ONLINE", "20%"])
-# shell("zpool list -H -o health,frag " + POOL_NAME)
+    zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
+    # shell("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
 
-# TODO: Clean up this `zpool status` command and perform text parsing locally instead.
-zpool_vals.extend(
-    ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
-# shell("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
+    # TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
+    #       all snapshots sizes (`-r`) and summing them (`awk`) before returning. Alternative?
+    #       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
+    #       Parsing and addition should be performed locally.
+    zpool_vals.extend(["1381425606656"])
+    # shell("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
 
-# Merge key and values lists into a dictionary
-zpool = dict(zip(zpool_keys, zpool_vals))
+    zpool_vals.extend(["ONLINE", "20%"])
+    # shell("zpool list -H -o health,frag " + POOL_NAME)
 
-# Convert all eligible strings to floats
-zpool = {key: str_to_float(value) for key, value in zpool.items()}
+    # TODO: Clean up this `zpool status` command and perform text parsing locally instead.
+    zpool_vals.extend(
+        ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
+    # shell("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
-# Create / update some more value pairs
-zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
-zpool.update({'VirtCapUsedPerc': round(zpool["VirtCapUsed"] / zpool["VirtCapTot"] * 100),
-              'VirtCompPerc': str(f"{zpool['VirtCompRatio'] -1:.0%}"),
-              'TotalwaitBoth': zpool["TotalwaitRead"] + zpool["TotalwaitWrite"]})
+    # Merge key and values lists into a dictionary
+    zpool = dict(zip(zpool_keys, zpool_vals))
 
-# Sort the dictionary alphabetically by key
-zpool = dict(sorted(zpool.items()))
+    # Convert all eligible strings to floats
+    zpool = {key: str_to_float(value) for key, value in zpool.items()}
 
-# Print
+    # Create / update some more value pairs
+    zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
+    zpool.update({'VirtCapUsedPerc': round(zpool["VirtCapUsed"] / zpool["VirtCapTot"] * 100),
+                  'VirtCompPerc': str(f"{zpool['VirtCompRatio'] -1:.0%}"),
+                  'TotalwaitBoth': zpool["TotalwaitRead"] + zpool["TotalwaitWrite"]})
+
+    # Sort the dictionary alphabetically by key
+    zpool = dict(sorted(zpool.items()))
+
+    return zpool
+
+######## End function definitions ########
+
+
+zpool = get_stats()
+
 print_struct(zpool)
