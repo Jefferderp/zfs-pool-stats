@@ -26,7 +26,7 @@ POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
 REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
 
 
-######## Begin function definitions ########
+######## Begin functions definitions ########
 
 # TODO: Change this function to run commands locally, once the script is ready.
 def shell(cmdline):
@@ -113,7 +113,7 @@ def get_stats():
 
     return zpool
 
-######## End function definitions ########
+######## End functions definitions ########
 
 
 zpool = get_stats()
