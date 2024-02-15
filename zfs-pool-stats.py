@@ -1,10 +1,12 @@
 #! python3
-import subprocess
-import time
+import subprocess  # for shell()
+import math  # for convert_sizes()
 
 # TODO FEATURES:
 # * Repeated output in aligned columns with automatic minimum width
 # * Convert byte/nanosecond values to human-readable notation
+# To conv_bytes() add:
+# * Up/down/nearest rounding preference per-invocation
 # * A sticky header with ["stateHealth"] and ["stateText"]
 # * An -o flag to specify the list and order of columns (comma-separated)
 # * An -o+ flag to add additional columns to the default set (a'la `lsblk`)
@@ -18,6 +20,8 @@ import time
 #       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
 #       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
 # * Implement multiple simultaneous pool outputs
+# * Change shell_cmd() to run locally instead of remotely
+# * Restore shell_cmd() lines commented out and remove placeholder lists
 
 ### Define constants ###
 POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
@@ -26,12 +30,16 @@ POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
 REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
 
 
-######## Begin functions definitions ########
+def shell_cmd(cmdline):
+    """Run shell commands via SSH and return output.
 
-# TODO: Change this function to run commands locally, once the script is ready.
-def shell(cmdline):
-    """Run shell commands via SSH and return output (stdout or stderr).
-    (cmdline) is the command line to run."""
+    Args:
+        cmdline: The shell command to run on the system.
+
+    Returns:
+        A string representing either stdout or stderr,
+        depending on the exit code of cmdline.
+    """
     result = subprocess.run(["ssh", "root@192.168.1.33", cmdline],
                             capture_output=True, text=True, check=True)
 
@@ -42,8 +50,15 @@ def shell(cmdline):
     return result.stdout if result.returncode == 0 else result.stderr
 
 
-def str_to_float(value):
-    """Convert eligible strings to floats. Return original string when unable."""
+def conv_float(value):
+    """Try to convert string to float. On fail, pass through unmodified.
+
+    Args:
+        value: The value (string or int) to convert to float.
+
+    Returns:
+        The float representation of value.
+    """
     try:
         value = value.strip('-%')  # Remove undesired chars
         return float(value) if value else 0  # Convert eligible strings to floats. Convert empty strings to 0.
@@ -52,14 +67,48 @@ def str_to_float(value):
 
 
 def print_struct(struct):
-    """Pretty-print a struct (dict/list/tuple) in line-delimited "key : value" format."""
+    """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
     for key, value in struct.items():
-        print(f"{key} : {value}")
+        print(f"{key} : {conv_bytes_str(value, '', 5)}")
+
+
+def conv_bytes_str(size, unit="", decimals=1):
+    """Convert byte values to a specified unit. Uses powers of 1024 to align with `zfs get`.
+    
+    Args:
+        size: The byte value to convert (int or float).
+        notation: The desired notation ('B', 'K', 'M', 'G', 'T', 'P', 'E').
+                  Defaults to 'M'.
+    
+    Returns:
+        A string representing the byte value in the chosen format.
+    """
+    if size == 0 or isinstance(size, str):  # Pass through 0 or strings unmodified
+        return size
+    units = ("B", "K", "M", "G", "T", "P", "E")
+    if unit == "":
+        i = int(math.floor(math.log(size, 1024)))
+        p = math.pow(1024, i)
+        output = round(size / p, decimals)
+        return f"{output}{units[i]}"
+    else:
+        try:
+            index = units.index(unit.upper())  # Find index of target notation
+            divisor = 1024 ** index  # Calculate byte value to divide by
+            output = round(size / divisor, decimals)
+            return f"{output}{unit}"
+        except ValueError:
+            print(f"ERROR: Unit {unit} is not one of: {units}")
 
 
 def get_stats():
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
-    Return a dictionary of ZFS pool statistics, formatted as strings and floats."""
+    
+    Args:
+        None
+
+    Returns:
+        A dictionary of ZFS pool statistics, formatted as strings and floats."""
 
     # NOTE: In case the output sequence from any of these underlying commands ever changes in a future version,
     #       the keys and values in this dictionary will be misaligned, requiring source code adjustment.
@@ -100,7 +149,7 @@ def get_stats():
     zpool = dict(zip(zpool_keys, zpool_vals))
 
     # Convert all eligible strings to floats
-    zpool = {key: str_to_float(value) for key, value in zpool.items()}
+    zpool = {key: conv_float(value) for key, value in zpool.items()}
 
     # Create / update some more value pairs
     zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
@@ -113,7 +162,6 @@ def get_stats():
 
     return zpool
 
-######## End functions definitions ########
 
 
 zpool = get_stats()
