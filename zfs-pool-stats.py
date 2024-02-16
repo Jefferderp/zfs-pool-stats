@@ -69,41 +69,66 @@ def conv_float(value):
 def print_struct(struct):
     """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
     for key, value in struct.items():
-        print(f"{key} : {conv_bytes_str(value, '', 5)}")
+        print(f"{key} : {value}")
 
 
-def conv_bytes_str(size, unit="", decimals=1):
+def conv_bytes(size, unit="", decimals=1):
     """Convert byte values to a specified unit. Uses powers of 1024 to align with `zfs get`.
-    
+
     Args:
         size: The byte value to convert (int or float).
         notation: The desired notation ('B', 'K', 'M', 'G', 'T', 'P', 'E').
                   Defaults to 'M'.
-    
+
     Returns:
         A string representing the byte value in the chosen format.
     """
-    if size == 0 or isinstance(size, str):  # Pass through 0 or strings unmodified
+    # Handle 0 and strings. Return unmodified.
+    if size == 0 or isinstance(size, str):
         return size
     units = ("B", "K", "M", "G", "T", "P", "E")
-    if unit == "":
+    if unit == "":  # If unit not specified, calculate automatically
         i = int(math.floor(math.log(size, 1024)))
         p = math.pow(1024, i)
         output = round(size / p, decimals)
         return f"{output}{units[i]}"
-    else:
-        try:
-            index = units.index(unit.upper())  # Find index of target notation
-            divisor = 1024 ** index  # Calculate byte value to divide by
-            output = round(size / divisor, decimals)
-            return f"{output}{unit}"
-        except ValueError:
-            print(f"ERROR: Unit {unit} is not one of: {units}")
+    try:  # If unit specified, scale to that unit
+        index = units.index(unit.upper())  # Find index of target notation
+        divisor = 1024 ** index  # Calculate byte value to divide by
+        output = round(size / divisor, decimals)
+        return f"{output}{unit}"
+    except ValueError:
+        print(f"ValueError: Unit {unit} is not one of: {units}")
+
+
+def conv_microseconds(time, unit=""):
+    """TODO: Write this docstring.
+    `zpool iostat` uses microseconds."""
+    # Handle 0 and strings. Return unmodified.
+    if time == 0 or isinstance(time, str):
+        return time
+    units = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
+    epsilon = 0.00001  # A tiny tolerance for floating-point comparisons
+
+    # Automatic unit scaling, if not specified.
+    if unit == "":
+        for i, key in enumerate(units):
+            if time >= units[key] - epsilon:
+                divisor = units[key]
+                selected_unit = key
+                break  # Exit the loop once the appropriate unit is found
+        scaled_time = time / divisor
+        return f"{scaled_time} {selected_unit}"    
+    # Manual unit scaling, if specified.
+    try:
+        return f"{time / units[unit]} {unit}"
+    except KeyError:
+        print(f"ValueError: Unit {unit} is not one of: {units}")
 
 
 def get_stats():
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
-    
+
     Args:
         None
 
@@ -154,14 +179,13 @@ def get_stats():
     # Create / update some more value pairs
     zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
     zpool.update({'VirtCapUsedPerc': round(zpool["VirtCapUsed"] / zpool["VirtCapTot"] * 100),
-                  'VirtCompPerc': str(f"{zpool['VirtCompRatio'] -1:.0%}"),
+                  'VirtCompPerc': str(f"{zpool['VirtCompRatio'] -1 :.0%}"),
                   'TotalwaitBoth': zpool["TotalwaitRead"] + zpool["TotalwaitWrite"]})
 
     # Sort the dictionary alphabetically by key
     zpool = dict(sorted(zpool.items()))
 
     return zpool
-
 
 
 zpool = get_stats()
