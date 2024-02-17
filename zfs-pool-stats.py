@@ -1,30 +1,34 @@
 #! python3
-import subprocess  # for shell()
-import math  # for convert_sizes()
+import subprocess
+import math
 
-# TODO FEATURES:
-# * Repeated output in aligned columns with automatic minimum width
-# * Upgrade conv_microseconds() to round up by length (99s > 1.65m), instead of time (59s > 1m)
-# Add to conv_bytes():
-# * Up/down/nearest rounding preference per-invocation
-# * A sticky header with ["stateHealth"] and ["stateText"]
-# * An -o flag to specify the list and order of columns (comma-separated)
-# * An -o+ flag to add additional columns to the default set (a'la `lsblk`)
-# * An -p flag to specify the pool name
-# * An -t flag to specify the iteration frequency
-# * Use first line of `zpool iostat` (without -y) to get statistics since boot, and display as the last line (sticky)
-# * Implement color codes for pool state health
-# * A brief warning if the user specifies a REPEAT_DELAY < 1
-# * Add internal delays of between 5 and 15 seconds for any relatively stable values, which are highly unlikely
-#       to change drastically in a brief time window. These are:
-#       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
-#       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
-# * Implement multiple simultaneous pool outputs
-# * Change shell_cmd() to run locally instead of remotely
-# * Restore shell_cmd() lines commented out and remove placeholder lists
+""" TODO FEATURES:
+* Repeated output in aligned columns with automatic minimum width
+* Upgrade conv_microseconds() to round up by length (99s > 1.65m), instead of time (59s > 1m)
+Add to conv_bytes():
+* Up/down/nearest rounding preference per-invocation or per-value
+* A sticky header with ["stateHealth"] and ["stateText"]
+* An -o flag to specify the list and order of columns (comma-separated)
+* An -o+ flag to add additional columns to the default set (a'la `lsblk`)
+* An -p flag to specify the pool name
+* An -t flag to specify the iteration frequency
+* Use first line of `zpool iostat` (without -y) to get statistics since boot, and display as the last line (sticky)
+   and with some special stylization (bold, underlined, etc.)
+* Implement color codes for pool state health
+* A brief warning if the user specifies a REPEAT_DELAY < 1
+* Add internal delays of between 5 and 15 seconds for any relatively stable values, which are highly unlikely
+      to change drastically in a brief time window. These are:
+      Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
+      VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
+* Implement multiple simultaneous pool outputs
+* Restore shell_cmd() lines commented out and remove placeholder lists
+* Change shell_cmd() to run locally instead of remotely
+* Try removing the need for math module
+"""
 
 ### Define constants ###
 POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
+
 # Repeat delay also affects the sampling time of some commands like `zpool iostat`.
 # A sampling time of at least 1 second is ideal for accurate statistics.
 REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
@@ -69,7 +73,16 @@ def conv_float(value):
 def print_struct(struct):
     """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
     for key, value in struct.items():
-        print(f"{key} : {value}")
+        # Special handling for tuples: only print first value from any tuple
+        if isinstance(key, tuple) and isinstance(value, tuple):  # If key and value are both tuples
+            print(f"{key[0]} : {value[0]}")
+        elif isinstance(key, tuple):  # If only key is a tuple
+            print(f"{key[0]} : {value}")
+        elif isinstance(value, tuple):  # If only value is a tuple
+            print(f"{key} : {value[0]}")
+        # If neither key or value are tuples, print them in their entirety:
+        else:
+            print(f"{key} : {value}")
 
 
 def conv_bytes(size, notation=""):
@@ -147,14 +160,14 @@ def get_stats():
     #           Starting from ["VirtCapUsed"], the values of `zfs get` are assigned
     #           Starting from ["StateHealth"], the values of `zfs get` (again) are assigned
     #           Starting from ["StateText"], the values of `zpool status` are assigned
-    zpool_keys = ("Name", "LogicCapUsed", "LogicCapFree", "OpsRead", "OpsWrite", "BwRead", "BwWrite",
-                  "TotalwaitRead", "TotalwaitWrite", "DiskwaitRead", "DiskwaitWrite", "SyncqwaitRead",
-                  "SyncqwaitWrite", "AsyncqwaitRead", "AsyncqwaitWrite", "ScrubWait", "TrimWait",
-                  "VirtCapUsed", "VirtCapFree", "VirtCompRatio", "VirtCapUsedByChilds", "VirtCapUsedBySnaps",
-                  "StateHealth", "StateFrag", "StateText")
+    zpool_keys = [("Name", "str"), ("LogicCapUsed"), ("LogicCapFree"), ("OpsRead"), ("OpsWrite"), ("BwRead"), ("BwWrite"),
+                  ("TotalwaitRead"), ("TotalwaitWrite"), ("DiskwaitRead"), ("DiskwaitWrite"), ("SyncqwaitRead"),
+                  ("SyncqwaitWrite"), ("AsyncqwaitRead"), ("AsyncqwaitWrite"), ("ScrubWait"), ("TrimWait"),
+                  ("VirtCapUsed"), ("VirtCapFree"), ("VirtCompRatio"), ("VirtCapUsedByChilds"), ("VirtCapUsedBySnaps"),
+                  ("StateHealth"), ("StateFrag"), ("StateText")]
 
-    zpool_vals = (["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
-                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"])
+    zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
+                  "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
     # shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
 
     zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
@@ -193,6 +206,9 @@ def get_stats():
     return zpool
 
 
+# Get a raw dictionary of the latest stats
 zpool = get_stats()
 
+# Print the dictionary in a nice format
 print_struct(zpool)
+print(zpool)
