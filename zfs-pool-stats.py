@@ -160,11 +160,9 @@ def get_stats():
     #           Starting from ["VirtCapUsed"], the values of `zfs get` are assigned
     #           Starting from ["StateHealth"], the values of `zfs get` (again) are assigned
     #           Starting from ["StateText"], the values of `zpool status` are assigned
-    zpool_keys = [("Name", "str"), ("LogicCapUsed"), ("LogicCapFree"), ("OpsRead"), ("OpsWrite"), ("BwRead"), ("BwWrite"),
-                  ("TotalwaitRead"), ("TotalwaitWrite"), ("DiskwaitRead"), ("DiskwaitWrite"), ("SyncqwaitRead"),
-                  ("SyncqwaitWrite"), ("AsyncqwaitRead"), ("AsyncqwaitWrite"), ("ScrubWait"), ("TrimWait"),
-                  ("VirtCapUsed"), ("VirtCapFree"), ("VirtCompRatio"), ("VirtCapUsedByChilds"), ("VirtCapUsedBySnaps"),
-                  ("StateHealth"), ("StateFrag"), ("StateText")]
+    #           TODO: Check if StateFrag and VirtCompRatio values are not mangled by being indicated as type "size"
+    zpool_keys = [("Name", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
+                  ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "size"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFrag", "size"), ("StateText", "label")]
 
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
@@ -195,13 +193,15 @@ def get_stats():
     zpool = {key: conv_float(value) for key, value in zpool.items()}
 
     # Create / update some more value pairs
-    zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
-    zpool.update({'VirtCapUsedPerc': round(zpool["VirtCapUsed"] / zpool["VirtCapTot"] * 100),
-                  'VirtCompPerc': str(f"{zpool['VirtCompRatio'] -1 :.0%}"),
-                  'TotalwaitBoth': zpool["TotalwaitRead"] + zpool["TotalwaitWrite"]})
-
+    # zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
+    zpool.update({('VirtCapTot', 'size'): int(zpool[('VirtCapUsed', 'size')]) + int(zpool[('VirtCapFree', 'size')])})
+    
+    zpool.update({('VirtCapUsedPerc', 'perc'): round(zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size'] * 100),
+                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] -1,
+                   ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
+ 
     # Sort the dictionary alphabetically by key
-    zpool = dict(sorted(zpool.items()))
+    zpool = dict(zpool.items())
 
     return zpool
 
