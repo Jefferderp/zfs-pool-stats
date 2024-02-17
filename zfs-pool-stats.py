@@ -4,8 +4,8 @@ import math  # for convert_sizes()
 
 # TODO FEATURES:
 # * Repeated output in aligned columns with automatic minimum width
-# * Convert byte/nanosecond values to human-readable notation
-# To conv_bytes() add:
+# * Upgrade conv_microseconds() to round up by length (99s > 1.65m), instead of time (59s > 1m)
+# Add to conv_bytes():
 # * Up/down/nearest rounding preference per-invocation
 # * A sticky header with ["stateHealth"] and ["stateText"]
 # * An -o flag to specify the list and order of columns (comma-separated)
@@ -104,27 +104,52 @@ def conv_bytes(size, unit="", decimals=1):
 def conv_microseconds(time, unit=""):
     """TODO: Write this docstring.
     `zpool iostat` uses microseconds."""
+  
     # Handle 0 and strings. Return unmodified.
     if time == 0 or isinstance(time, str):
         return time
-    # Automatic unit scaling, if unspecified.
-    if unit == "":
-        factors = (1000000, 1000, 60, 60, 24)  # Scale factors for each unit
-        units = "us ms s m h d".split()
-
-        for i in range(len(factors)):
-            scaled_time = time / factors[i]
-            if scaled_time < 100:
-                return f"{scaled_time} {units[i]}"
-            time = scaled_time  # If >= 100, prepare to check the next unit
-
-        return f"{time} d"  # Any final residue will be considered days
-    # Manual unit scaling, if specified.
     units = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
+    epsilon = 0.0001  # A tiny tolerance for floating-point comparisons
+
+    # Automatic unit scaling, if not specified.
+    if unit == "":
+        for i, key in enumerate(units):
+            if time >= units[key] - epsilon:
+                divisor = units[key]
+                selected_unit = key
+                break  # Exit the loop once the appropriate unit is found
+        scaled_time = time / divisor
+        return f"{scaled_time} {selected_unit}"    
+    # Manual unit scaling, if specified.
     try:
-        return f"{time / units[unit]} {unit}"  # TODO: THIS IS BROKEN
+        return f"{time / units[unit]} {unit}"
     except KeyError:
         print(f"ValueError: Unit {unit} is not one of: {units}")
+
+# def conv_microseconds(time, unit=""):
+#     """TODO: Write this docstring.
+#     `zpool iostat` uses microseconds."""
+#     # Handle 0 and strings. Return unmodified.
+#     if time == 0 or isinstance(time, str):
+#         return time
+#     # Automatic unit scaling, if unspecified.
+#     if unit == "":
+#         factors = (1000000, 1000, 60, 60, 24)  # Scale factors for each unit
+#         units = "us ms s m h d".split()
+
+#         for i in range(len(factors)):
+#             scaled_time = time / factors[i]
+#             if scaled_time < 100:
+#                 return f"{scaled_time} {units[i]}"
+#             time = scaled_time  # If >= 100, prepare to check the next unit
+
+#         return f"{time} d"  # Any final residue will be considered days
+#     # Manual unit scaling, if specified.
+#     units = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
+#     try:
+#         return f"{time / units[unit]} {unit}"  # TODO: THIS IS BROKEN
+#     except KeyError:
+#         print(f"ValueError: Unit {unit} is not one of: {units}")
 
 
 def get_stats():
