@@ -72,84 +72,63 @@ def print_struct(struct):
         print(f"{key} : {value}")
 
 
-def conv_bytes(size, unit="", decimals=1):
-    """Convert byte values to a specified unit. Uses powers of 1024 to align with `zfs get`.
+def conv_bytes(size, notation=""):
+    """Convert byte values to a specified notation. Uses powers of 1024 as output by `zfs get`.
 
     Args:
-        size: The byte value to convert (int or float).
+        size: The byte value (int or float) to convert.
         notation: The desired notation ('B', 'K', 'M', 'G', 'T', 'P', 'E').
-                  Defaults to 'M'.
+            If unspecified, automatically chooses the highest notation.
 
     Returns:
-        A string representing the byte value in the chosen format.
-    """
-    # Handle 0 and strings. Return unmodified.
+        A string representing the byte value expressed in the chosen notation."""
+    # Handle 0 and strings. Return them unmodified.
     if size == 0 or isinstance(size, str):
         return size
-    units = ("B", "K", "M", "G", "T", "P", "E")
-    if unit == "":  # If unit not specified, calculate automatically
-        i = int(math.floor(math.log(size, 1024)))  # How does math work?!
+
+    notations = ("B", "K", "M", "G", "T", "P", "E")
+
+    if notation == "":  # Automatic unit scaling, if not specified.
+        i = int(math.floor(math.log(size, 1024)))  # Math, how does it work?!
         p = math.pow(1024, i)
-        output = round(size / p, decimals)
-        return f"{output}{units[i]}"
-    try:  # If unit specified, scale to that unit
-        index = units.index(unit.upper())  # Find index of target notation
+        return f"{round(size / p)}{notations[i]}"
+
+    try:  # Manual unit scaling, if specified.
+        index = notations.index(notation.upper())  # Find index of target notation
         divisor = 1024 ** index  # Calculate byte value to divide by
-        output = round(size / divisor, decimals)
-        return f"{output}{unit}"
+        return f"{round(size / divisor)}{notation}"
     except ValueError:
-        print(f"ValueError: Unit {unit} is not one of: {units}")
+        print(f"ValueError: {notation} is not one of: {notations}")
 
 
-def conv_microseconds(time, unit=""):
-    """TODO: Write this docstring.
-    `zpool iostat` uses microseconds."""
-  
-    # Handle 0 and strings. Return unmodified.
+def conv_microseconds(time, notation="",):
+    """Convert microsecond values to a specified notation. Accepts microseconds as output by `zpool iostat -p`.
+
+    Args:
+        time: The microsecond value (int or float) to convert.
+        notation: The desired notation ('d', 'h', 'm', 's', 'ms', 'us').
+            If unspecified, automatically chooses the highest notation.
+
+    Returns:
+        A string representing the time value expressed in the chosen notation."""
+    # Handle 0 and strings. Return them unmodified.
     if time == 0 or isinstance(time, str):
         return time
-    units = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
-    epsilon = 0.0001  # A tiny tolerance for floating-point comparisons
 
-    # Automatic unit scaling, if not specified.
-    if unit == "":
-        for i, key in enumerate(units):
-            if time >= units[key] - epsilon:
-                divisor = units[key]
-                selected_unit = key
+    notations = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
+
+    if notation == "":  # Automatic unit scaling, if not specified.
+        for i, key in enumerate(notations):
+            if time >= (notations[key] - 0.0001):  # Include a small (0.0001) floating-point rounding tolerance
+                divisor = notations[key]
+                notation = key
                 break  # Exit the loop once the appropriate unit is found
-        scaled_time = time / divisor
-        return f"{scaled_time} {selected_unit}"    
-    # Manual unit scaling, if specified.
-    try:
-        return f"{time / units[unit]} {unit}"
+        return f"{round(time / divisor)}{notation}"
+
+    try:  # Manual unit scaling, if specified.
+        return f"{round(time / notations[notation])}{notation}"
     except KeyError:
-        print(f"ValueError: Unit {unit} is not one of: {units}")
-
-# def conv_microseconds(time, unit=""):
-#     """TODO: Write this docstring.
-#     `zpool iostat` uses microseconds."""
-#     # Handle 0 and strings. Return unmodified.
-#     if time == 0 or isinstance(time, str):
-#         return time
-#     # Automatic unit scaling, if unspecified.
-#     if unit == "":
-#         factors = (1000000, 1000, 60, 60, 24)  # Scale factors for each unit
-#         units = "us ms s m h d".split()
-
-#         for i in range(len(factors)):
-#             scaled_time = time / factors[i]
-#             if scaled_time < 100:
-#                 return f"{scaled_time} {units[i]}"
-#             time = scaled_time  # If >= 100, prepare to check the next unit
-
-#         return f"{time} d"  # Any final residue will be considered days
-#     # Manual unit scaling, if specified.
-#     units = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
-#     try:
-#         return f"{time / units[unit]} {unit}"  # TODO: THIS IS BROKEN
-#     except KeyError:
-#         print(f"ValueError: Unit {unit} is not one of: {units}")
+        print(f"ValueError: {notation} is not one of: {notations}")
 
 
 def get_stats():
