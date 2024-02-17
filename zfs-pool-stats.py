@@ -196,8 +196,8 @@ def get_stats():
     # zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
     zpool.update({('VirtCapTot', 'size'): int(zpool[('VirtCapUsed', 'size')]) + int(zpool[('VirtCapFree', 'size')])})
     
-    zpool.update({('VirtCapUsedPerc', 'perc'): round(zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size'] * 100),
-                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] -1,
+    zpool.update({('VirtCapUsedPerc', 'perc'): (zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size']),
+                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
                    ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
  
     # Sort the dictionary alphabetically by key
