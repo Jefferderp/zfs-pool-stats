@@ -194,7 +194,7 @@ def get_stats():
 
     # Create / update some more value pairs
     # zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
-    zpool.update({('VirtCapTot', 'size'): int(zpool[('VirtCapUsed', 'size')]) + int(zpool[('VirtCapFree', 'size')])})
+    zpool.update({('VirtCapTot', 'size'): zpool[('VirtCapUsed', 'size')] + zpool[('VirtCapFree', 'size')]})
     
     zpool.update({('VirtCapUsedPerc', 'perc'): (zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size']),
                    ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
