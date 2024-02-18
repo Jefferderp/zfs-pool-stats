@@ -70,21 +70,6 @@ def conv_float(value):
         return value
 
 
-def print_struct(struct):
-    """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
-    for key, value in struct.items():
-        # Special handling for tuples: only print first value from any tuple
-        if isinstance(key, tuple) and isinstance(value, tuple):  # If key and value are both tuples
-            print(f"{key[0]} : {value[0]}")
-        elif isinstance(key, tuple):  # If only key is a tuple
-            print(f"{key[0]} : {value}")
-        elif isinstance(value, tuple):  # If only value is a tuple
-            print(f"{key} : {value[0]}")
-        # If neither key or value are tuples, print them in their entirety:
-        else:
-            print(f"{key} : {value}")
-
-
 def conv_bytes(size, notation=""):
     """Convert byte values to a specified notation. Uses powers of 1024 as output by `zfs get`.
 
@@ -144,9 +129,23 @@ def conv_microseconds(time, notation="",):
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
+def print_struct(struct):
+    """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
+    for key, value in struct.items():
+        # Special handling for tuples: only print first value from any tuple
+        if isinstance(key, tuple) and isinstance(value, tuple):  # If key and value are both tuples
+            print(f"{key[0]} : {value[0]}")
+        elif isinstance(key, tuple):  # If only key is a tuple
+            print(f"{key[0]} : {value}")
+        elif isinstance(value, tuple):  # If only value is a tuple
+            print(f"{key} : {value[0]}")
+        # If neither key or value are tuples, print them in their entirety:
+        else:
+            print(f"{key} : {value}")
+
+
 def get_stats():
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
-
     Args:
         None
 
@@ -163,25 +162,25 @@ def get_stats():
 
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
-    # shell("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
+    # shell_cmd("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
 
     zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
-    # shell("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
+    # shell_cmd("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
 
     # TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
     #       all snapshots sizes (`-r`) and summing them (`awk`) before returning. Alternative?
     #       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
     #       Parsing and addition should be performed locally.
     zpool_vals.extend(["1381425606656"])
-    # shell("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
+    # shell_cmd("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
 
     zpool_vals.extend(["ONLINE", "20%"])
-    # shell("zpool list -H -o health,frag " + POOL_NAME)
+    # shell_cmd("zpool list -H -o health,frag " + POOL_NAME)
 
     # TODO: Clean up this `zpool status` command and perform text parsing locally instead.
     zpool_vals.extend(
         ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
-    # shell("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
+    # shell_cmd("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
     # Merge keys and values lists into a dictionary
     zpool = dict(zip(zpool_keys, zpool_vals))
@@ -195,7 +194,7 @@ def get_stats():
                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
                   ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
 
-    return zpool # Finally return the {zpool} dictionary for further use
+    return zpool  # Finally return the {zpool} dictionary for further use
 
 
 # Get a raw dictionary of the latest stats
