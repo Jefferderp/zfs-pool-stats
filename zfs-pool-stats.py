@@ -1,6 +1,7 @@
 #! python3
 import subprocess
 import math
+import argparse
 
 """ TODO FEATURES:
 * Repeated output in aligned columns with automatic minimum width
@@ -26,7 +27,31 @@ Add to conv_bytes():
 * Try removing the need for math module
 """
 
-### Define constants ###
+# Take arguments
+
+
+def parse_columns_argument(string):
+    result = {}
+    try:
+        pairs = string.split(',')
+        for pair in pairs:
+            key, value = pair.split(':')  # TODO: Assign a "" value if not specified by user
+            result[key] = value
+        return result
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "ERROR: Invalid format for --columns. Use Column1:Notation,Column2:Notation,...")
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--columns', type=parse_columns_argument,
+                    help='A comma-separated list of columns to print. Optionally append :notation. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
+args = parser.parse_args()
+
+if args.columns:
+    print(args.columns)  # Spit out a dictionary of --columns args
+
+# Define constants
 POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
 
 # Repeat delay also affects the sampling time of some commands like `zpool iostat`.
@@ -129,8 +154,10 @@ def conv_microseconds(time, notation="",):
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
-def print_struct(struct):
-    """Pretty-print a struct (dict/list/tuple) in a line-delimited 'key : value' format."""
+def print_dict(struct):
+    """
+    Pretty-print a dictionary in format: 'key : value\n'.
+    """
     for key, value in struct.items():
         # Special handling for tuples: only print first value from any tuple
         if isinstance(key, tuple) and isinstance(value, tuple):  # If key and value are both tuples
@@ -144,13 +171,13 @@ def print_struct(struct):
             print(f"{key} : {value}")
 
 
-def get_stats():
+def get_stats(pool=POOL_NAME):
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
     Args:
-        None
+        pool: The name of the ZFS pool to collect statistics on.
 
     Returns:
-        A dictionary of ZFS pool statistics, formatted as strings and floats."""
+        A dictionary of ZFS pool statistics, formatted as floats or strings."""
 
     # NOTE: In case the output sequence from any of these underlying commands ever changes in a future version,
     #       the keys and values in this dictionary will be misaligned, requiring source code adjustment.
@@ -198,7 +225,7 @@ def get_stats():
 
 
 # Get a raw dictionary of the latest stats
-zpool = get_stats()
+stats = get_stats()
 
 # Print the dictionary in a nice format
-print_struct(zpool)
+# print_dict(stats)
