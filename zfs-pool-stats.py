@@ -17,8 +17,8 @@ Add to conv_bytes():
    and with some special stylization (bold, underlined, etc.)
 * Implement color codes for pool state health
 * A brief warning if the user specifies a REPEAT_DELAY < 1
-* Add internal delays of between 5 and 15 seconds for any relatively stable values, which are highly unlikely
-      to change drastically in a brief time window. These are:
+* Add internal ingestion delays of between 5 and 15 seconds (to save CPU) for any relatively stable values,
+      which are highly unlikely to change drastically in a brief time window. These are:
       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
 * Implement multiple simultaneous pool outputs
@@ -30,22 +30,39 @@ Add to conv_bytes():
 # Take arguments
 
 
-def parse_columns_argument(string):
-    result = {}
+def parse_arg(string):
+    """Parse an argument in format 'Main:SubArg1:SubArg2' and intelligently split into a dictionary.
+
+    Args:
+        arg: The raw argument (string) to be parsed and split.
+             Primary arguments are split by ',' and Sub-arguments are split by ':'.
+
+    Returns:
+        A dictionary comprised of Primary arguments and Sub-arguments.
+        Each key is a Primary argument.
+        Each value is a list of Sub-arguments, if any. Otherwise, value is a list containing an empty string.
+
+    """
+    arguments = {}
     try:
-        pairs = string.split(',')
-        for pair in pairs:
-            key, value = pair.split(':')  # TODO: Assign a "" value if not specified by user
-            result[key] = value
-        return result
+        sub_args = string.split(',')
+        for i in sub_args:
+            # If ':' separator, split sub-arguments.
+            if ':' in i:
+                key, *value = i.split(':')  # TODO: Assign a "" value if not specified by user
+            # If no ':' separators, don't attempt to split Sub-arguments.
+            else:
+                key, value = i, [""]  # Assign value to a list containing an empty string, for consistency.
+            arguments[key] = value
+        # Return a dictionary of Primary arguments (as keys) and Sub-arguments (as values in a list).
+        return arguments
     except ValueError:
-        raise argparse.ArgumentTypeError(
-            "ERROR: Invalid format for --columns. Use Column1:Notation,Column2:Notation,...")
+        raise argparse.ArgumentTypeError("ERROR: Invalid format for --columns. Use Column1,Column2, ... ")
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--columns', type=parse_columns_argument,
-                    help='A comma-separated list of columns to print. Optionally append :notation. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
+parser.add_argument('--columns', type=parse_arg,
+                    help='A comma-separated list of columns to print. Optionally specify :notation. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
 args = parser.parse_args()
 
 if args.columns:
@@ -80,7 +97,7 @@ def shell_cmd(cmdline):
 
 
 def conv_float(value):
-    """Try to convert string to float. On fail, pass through unmodified.
+    """Try to convert string to float, otherwise pass through original input.
 
     Args:
         value: The value (string or int) to convert to float.
