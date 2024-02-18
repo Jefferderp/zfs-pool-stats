@@ -17,8 +17,8 @@ Add to conv_bytes():
    and with some special stylization (bold, underlined, etc.)
 * Implement color codes for pool state health
 * A brief warning if the user specifies a REPEAT_DELAY < 1
-* Add internal delays of between 5 and 15 seconds for any relatively stable values, which are highly unlikely
-      to change drastically in a brief time window. These are:
+* Add internal ingestion delays of between 5 and 15 seconds (to save CPU) for any relatively stable values,
+      which are highly unlikely to change drastically in a brief time window. These are:
       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
 * Implement multiple simultaneous pool outputs
@@ -27,36 +27,35 @@ Add to conv_bytes():
 * Try removing the need for math module
 """
 
-# Take arguments
+###  Define functions  ###
 
 
-def parse_columns_argument(string):
-    result = {}
+def parse_arg(string):
+    """Parse an argument in format 'Main:SubArg1:SubArg2' and intelligently split into a dictionary.
+
+    Args:
+        string: The raw argument (string) to be parsed and split.
+                Primary arguments are split by ',' and Sub-arguments are split by ':'.
+
+    Returns:
+        A dictionary comprised of Primary arguments (as keys) and Sub-arguments (as a list of values).
+        If no Sub-arguments were passed, then value is a list containing an empty string.
+    """
+    arguments = {}
     try:
-        pairs = string.split(',')
-        for pair in pairs:
-            key, value = pair.split(':')  # TODO: Assign a "" value if not specified by user
-            result[key] = value
-        return result
+        sub_args = string.split(',')
+        for i in sub_args:
+            # If ':' separators, split Sub-arguments and stuff them into a list.
+            if ':' in i:
+                key, *value = i.split(':')
+            # If no ':' separators, don't attempt to split Sub-arguments.
+            else:
+                key, value = i, [""]  # Assign value to a list containing an empty string, for consistency.
+            arguments[key] = value
+        # Return a dictionary of Primary arguments (as keys) and Sub-arguments (as values in a list).
+        return arguments
     except ValueError:
-        raise argparse.ArgumentTypeError(
-            "ERROR: Invalid format for --columns. Use Column1:Notation,Column2:Notation,...")
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--columns', type=parse_columns_argument,
-                    help='A comma-separated list of columns to print. Optionally append :notation. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
-args = parser.parse_args()
-
-if args.columns:
-    print(args.columns)  # Spit out a dictionary of --columns args
-
-# Define constants
-POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
-
-# Repeat delay also affects the sampling time of some commands like `zpool iostat`.
-# A sampling time of at least 1 second is ideal for accurate statistics.
-REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
+        raise argparse.ArgumentTypeError("ERROR: Invalid format for --columns. Use Column1,Column2, ... ")
 
 
 def shell_cmd(cmdline):
@@ -80,7 +79,7 @@ def shell_cmd(cmdline):
 
 
 def conv_float(value):
-    """Try to convert string to float. On fail, pass through unmodified.
+    """Try to convert string to float, otherwise pass through original input.
 
     Args:
         value: The value (string or int) to convert to float.
@@ -171,7 +170,7 @@ def print_dict(struct):
             print(f"{key} : {value}")
 
 
-def get_stats(pool=POOL_NAME):
+def get_stats():
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
     Args:
         pool: The name of the ZFS pool to collect statistics on.
@@ -223,6 +222,24 @@ def get_stats(pool=POOL_NAME):
 
     return zpool  # Finally return the {zpool} dictionary for further use
 
+
+###  Accept arguments  ###
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--columns', type=parse_arg,
+                    help='A comma-separated list of columns to print. Optionally specify :scale. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
+args = parser.parse_args()  # Returns dictionary arg.columns
+
+if args.columns:
+    print(args.columns)  # Spit out a dictionary of --columns args
+
+###  Define constants  ###
+POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
+
+# Repeat delay also affects the sampling time of some commands like `zpool iostat`.
+# A sampling time of at least 1 second is ideal for accurate statistics.
+REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
 
 # Get a raw dictionary of the latest stats
 stats = get_stats()
