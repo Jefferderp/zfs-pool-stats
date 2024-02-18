@@ -155,12 +155,9 @@ def get_stats():
 
     # NOTE: In case the output sequence from any of these underlying commands ever changes in a future version,
     #       the keys and values in this dictionary will be misaligned, requiring source code adjustment.
-
-    #           Starting from ["Name"], the values of `zpool iostat` are assigned
-    #           Starting from ["VirtCapUsed"], the values of `zfs get` are assigned
-    #           Starting from ["StateHealth"], the values of `zfs get` (again) are assigned
-    #           Starting from ["StateText"], the values of `zpool status` are assigned
-    #           TODO: Check if StateFrag and VirtCompRatio values are not mangled by being indicated as type "size"
+    #       Starting from ["Name"], the values of `zpool iostat` are assigned. Starting from ["VirtCapUsed"], the values of `zfs get` are assigned.
+    #       Starting from ["StateHealth"], the values of `zfs get` (again) are assigned. Starting from ["StateText"], the values of `zpool status` are assigned.
+    #       TODO: Check if StateFrag and VirtCompRatio values are not mangled by being indicated as type "size"
     zpool_keys = [("Name", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
                   ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "size"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFrag", "size"), ("StateText", "label")]
 
@@ -186,24 +183,19 @@ def get_stats():
         ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
     # shell("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
-    # Merge key and values lists into a dictionary
+    # Merge keys and values lists into a dictionary
     zpool = dict(zip(zpool_keys, zpool_vals))
 
-    # Convert all eligible strings to floats
+    # Convert all eligible values to floats, so we can do math
     zpool = {key: conv_float(value) for key, value in zpool.items()}
 
-    # Create / update some more value pairs
-    # zpool.update({'VirtCapTot': zpool["VirtCapUsed"] + zpool["VirtCapFree"]})
+    # Create some more dictionary entries
     zpool.update({('VirtCapTot', 'size'): zpool[('VirtCapUsed', 'size')] + zpool[('VirtCapFree', 'size')]})
-    
     zpool.update({('VirtCapUsedPerc', 'perc'): (zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size']),
-                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
-                   ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
- 
-    # Sort the dictionary alphabetically by key
-    zpool = dict(zpool.items())
+                  ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
+                  ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
 
-    return zpool
+    return zpool # Finally return the {zpool} dictionary for further use
 
 
 # Get a raw dictionary of the latest stats
@@ -211,4 +203,3 @@ zpool = get_stats()
 
 # Print the dictionary in a nice format
 print_struct(zpool)
-print(zpool)
