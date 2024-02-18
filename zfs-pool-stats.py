@@ -2,6 +2,7 @@
 import subprocess
 import math
 import argparse
+import time
 
 """ TODO FEATURES:
 * Repeated output in aligned columns with automatic minimum width
@@ -25,16 +26,18 @@ Add to conv_bytes():
 * Restore shell_cmd() lines commented out and remove placeholder lists
 * Change shell_cmd() to run locally instead of remotely
 * Try removing the need for math module
+* Implement threading or async so that the delay inherent to get_stats() does not
+  add to the delay already specified by --interval
 """
 
 ###  Define functions  ###
 
 
-def parse_arg(string):
-    """Parse an argument in format 'Main:SubArg1:SubArg2' and intelligently split into a dictionary.
+def parse_complex_arg(string):
+    """Parse a flag argument in format 'Main:SubArg1:SubArg2' and intelligently split into a dictionary.
 
     Args:
-        string: The raw argument (string) to be parsed and split.
+        string: The raw flag (string) to be parsed and split.
                 Primary arguments are split by ',' and Sub-arguments are split by ':'.
 
     Returns:
@@ -43,16 +46,16 @@ def parse_arg(string):
     """
     arguments = {}
     try:
-        sub_args = string.split(',')
+        sub_args = string.split(',')  # Iterate over Primary arguments
         for i in sub_args:
             # If ':' separators, split Sub-arguments and stuff them into a list.
             if ':' in i:
                 key, *value = i.split(':')
-            # If no ':' separators, don't attempt to split Sub-arguments.
+            # If no ':' separators, don't attempt to split non-existent Sub-arguments.
             else:
                 key, value = i, [""]  # Assign value to a list containing an empty string, for consistency.
             arguments[key] = value
-        # Return a dictionary of Primary arguments (as keys) and Sub-arguments (as values in a list).
+        # Return a dictionary of Primary arguments (as keys) and Sub-arguments (as a list of values).
         return arguments
     except ValueError:
         raise argparse.ArgumentTypeError("ERROR: Invalid format for --columns. Use Column1,Column2, ... ")
@@ -170,7 +173,7 @@ def print_dict(struct):
             print(f"{key} : {value}")
 
 
-def get_stats():
+def get_stats(POOL):
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
     Args:
         pool: The name of the ZFS pool to collect statistics on.
@@ -186,27 +189,30 @@ def get_stats():
     zpool_keys = [("Name", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
                   ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "size"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFrag", "size"), ("StateText", "label")]
 
+    global zpool_keys_types  # Make this a global so I can access it outside of this function.
+    zpool_keys_types = ('label', 'size', 'time')
+
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
-    # shell_cmd("zpool iostat -Hypl " + POOL_NAME + " " + REPEAT_DELAY + " " + "1").split()
+    # shell_cmd("zpool iostat -Hypl " + POOL + " " + REPEAT_DELAY + " " + "1").split()
 
     zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
-    # shell_cmd("zfs get used,available,compressratio,usedbychildren " + POOL_NAME + " -Hp -d 0 -o value | tr '\n' ' '").split()
+    # shell_cmd("zfs get used,available,compressratio,usedbychildren " + POOL + " -Hp -d 0 -o value | tr '\n' ' '").split()
 
     # TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
     #       all snapshots sizes (`-r`) and summing them (`awk`) before returning. Alternative?
     #       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
     #       Parsing and addition should be performed locally.
     zpool_vals.extend(["1381425606656"])
-    # shell_cmd("zfs get usedbysnapshots " + POOL_NAME + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
+    # shell_cmd("zfs get usedbysnapshots " + POOL + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
 
     zpool_vals.extend(["ONLINE", "20%"])
-    # shell_cmd("zpool list -H -o health,frag " + POOL_NAME)
+    # shell_cmd("zpool list -H -o health,frag " + POOL)
 
     # TODO: Clean up this `zpool status` command and perform text parsing locally instead.
     zpool_vals.extend(
         ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
-    # shell_cmd("zpool status " + POOL_NAME + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
+    # shell_cmd("zpool status " + POOL + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
     # Merge keys and values lists into a dictionary
     zpool = dict(zip(zpool_keys, zpool_vals))
@@ -227,22 +233,57 @@ def get_stats():
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--columns', type=parse_arg,
-                    help='A comma-separated list of columns to print. Optionally specify :scale. For example:  --columns "pool,StateHealth,VirtCapFree:T"')
-args = parser.parse_args()  # Returns dictionary arg.columns
+parser.add_argument('--columns', '-c', dest="COLUMNS", type=parse_complex_arg,
+                    help='A comma-separated list of columns to output. Optionally specify :scale. \
+                          For example:  --columns pool,StateHealth,VirtCapFree:T ')
+parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
+                    help='The frequency of time (in seconds) to output statistics. Accepts whole or decimal numbers. \
+                          This also affects the sampling of some delay measurements; the recommendation is 1 second \
+                          or more to allow a sufficient sampling window for collecting i/o timing statistics. \
+                          For example:  --interval 1.5 ')
+parser.add_argument('--pool', '-p', dest="POOL", type=str,
+                    help='The name of the pool to report statistics for. For example:  --pool tank ')
+args = parser.parse_args()  # Returns dictionaries arg.columns, arg.interval, etc.
 
-if args.columns:
-    print(args.columns)  # Spit out a dictionary of --columns args
+# Temporarily specify arguments internally for development
+# args.POOL = "amalgm"
+# args.INTERVAL = 1
+# args.COLUMNS = ""
 
-###  Define constants  ###
-POOL_NAME = "amalgm"  # TODO: Get this as an external argument. Accept a string.
+###  Run main loop  ###
 
-# Repeat delay also affects the sampling time of some commands like `zpool iostat`.
-# A sampling time of at least 1 second is ideal for accurate statistics.
-REPEAT_DELAY = "1.0"  # TODO: Get this as an external argument. Accept an int or float.
 
-# Get a raw dictionary of the latest stats
-stats = get_stats()
+def print_stats_loop(pool=args.POOL, interval=args.INTERVAL, columns=args.COLUMNS):
+    while True:
+        # Get a new dictionary of statistics
+        stats = get_stats(pool)
 
-# Print the dictionary in a nice format
-# print_dict(stats)
+        # Temporarily print args for development
+        # print(f"POOL: {args.POOL}")
+        # print(f"INTERVAL: {args.INTERVAL}")
+        # print(f"COLUMNS: {args.COLUMNS}")
+        print(f"stats: {stats}")
+
+        # Wait for --interval, or wait 4 seconds if unspecified:
+        # TODO: Make this occur after printing columns (once done developing).
+        time.sleep(interval or 4)
+
+        # Print the dictionary in a nice format
+        # print_dict(stats)
+
+        # Print the user's specified --columns:
+        for column, notation in args.COLUMNS.items():
+
+            # Try all 3 possible permutations of key name in {stats}.
+            # This is because each key of {stats} is a tuple of (key_name, key_type),
+            # but we want to reference the key by just key_name, hence this workaround.
+            # I could consider specifying key_type in zpool_vals instead of zpool_keys,
+            # however this would be very painful given the way zpool_vals is populated.
+            for i in zpool_keys_types:  # Try all three [key_types] to brute-force match against {stats}
+                key = (column, i)  # Construct a tuple to properly match against {stats}
+                if key in stats:
+                    print(f"{column} : {notation[0]} : {stats[key]}")
+                    break  # exit the loop once we've found the key
+
+
+print_stats_loop()
