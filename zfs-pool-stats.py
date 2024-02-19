@@ -5,31 +5,28 @@ import argparse
 import time
 import pdb
 
-""" TODO FEATURES:
-* Repeated output in aligned columns with automatic minimum width
-* Upgrade conv_microseconds() to round up by length (99s > 1.65m), instead of time (59s > 1m)
+""" TODO:
+* Strip whitespace from args.COLUMNS to prevent dictionary key mis-matches, causing failure to print.
 * Standardize all input flags to lowercase handling
+* Repeated output in aligned columns with automatic minimum width
+* Upgrade conv_microseconds() to round up by length (99s = 1.65m != 100s), instead of time (59s > 1m)
 Add to conv_bytes():
 * Up/down/nearest rounding preference per-invocation or per-value
 * A sticky header with ["stateHealth"] and ["stateText"]
-* An -o flag to specify the list and order of columns (comma-separated)
-* An -o+ flag to add additional columns to the default set (a'la `lsblk`)
-* An -p flag to specify the pool name
-* An -t flag to specify the iteration frequency
 * Use first line of `zpool iostat` (without -y) to get statistics since boot, and display as the last line (sticky)
    and with some special stylization (bold, underlined, etc.)
-* Implement color codes for pool state health
+* An -c+ flag to add additional columns to the default set (a'la `lsblk`)
+* Implement text coloring for pool state health
 * A brief warning if the user specifies a REPEAT_DELAY < 1
-* Add internal ingestion delays of between 5 and 15 seconds (to save CPU) for any relatively stable values,
-      which are highly unlikely to change drastically in a brief time window. These are:
-      Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
-      VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
 * Restore shell_cmd() lines commented out and remove placeholder lists
 * Change shell_cmd() to run locally instead of remotely
 * Try removing the need for math module
-* Implement threading or async so that the delay inherent to get_stats() does not
-  add to the delay already specified by --interval
+* Implement threading or async so that any delay inherent to get_stats() isn't added to --interval
 * Implement multiple simultaneous pool outputs
+* Add internal ingestion delays of between 5 and 15 seconds (to save CPU) for any relatively stable values,
+      which are extremely unlikely to change +/- 1%. These are:
+      Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
+      VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
 """
 
 
@@ -61,9 +58,8 @@ def parse_complex_arg(string):
     except ValueError:
         raise argparse.ArgumentTypeError("ERROR: Invalid format for --columns. Use Column1,Column2, ... ")
 
+
 ###  Accept arguments  ###
-
-
 # Define arguments parser
 parser = argparse.ArgumentParser()
 
@@ -83,7 +79,7 @@ parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
 parser.add_argument('--pool', '-p', dest="POOL", type=str,
                     help='The name of the pool to report statistics for. For example:  --pool tank ')
 
-args = parser.parse_args()  # Expose args.COLUMNS, args.INTERVAL, etc. for reuse
+args = parser.parse_args()  # Expose args.COLUMNS, args.INTERVAL, etc. for use
 
 
 ###  Define functions  ###
@@ -189,6 +185,8 @@ def conv_microseconds(microseconds, notation=None):
 def print_dict(struct):
     """
     Pretty-print a dictionary in format: 'key : value\n'.
+
+    This is unused except for debugging.
     """
     for key, value in struct.items():
         # Special handling for tuples: only print first value from any tuple
@@ -201,6 +199,7 @@ def print_dict(struct):
         # If neither key or value are tuples, print them in their entirety:
         else:
             print(f"{key} : {value}")
+        return None
 
 
 def get_stats(pool):
@@ -263,8 +262,7 @@ def get_stats(pool):
     return zpool
 
 
-# TODO: Change default parameters to be more agnostic
-def convert_keys(ref_keys=get_stats(args.POOL), conv_keys=args.COLUMNS):
+def convert_keys(ref_keys, conv_keys):
     """Convert the values in a dictionary from raw integer/time values to human-readable notation.
 
     Args:
@@ -302,12 +300,29 @@ def convert_keys(ref_keys=get_stats(args.POOL), conv_keys=args.COLUMNS):
     return (output)
 
 
+def print_keys(input_dict, interval, execute=True):
+    """Print out a dictionary as defined by input_dict, on a loop as determined by interval.
+
+    Args:
+        input_dict: The input dictionary to be output at each interval.
+        interval: The delay in seconds (float) between outputs.
+        run: Whether to run this function. If False, exit without doing anything.
+
+    Returns:
+        None"""
+
+    while execute:
+        for key, value in input_dict.items():
+            print(f"{key} : {value}")
+        time.sleep(interval or 4)
+    
+    return None
+
+###  Run output  ###
+
 try:
-    converted_keys = convert_keys()
-    print(converted_keys)
+    raw_stats = get_stats(args.POOL)
+    converted_keys = convert_keys(ref_keys=raw_stats, conv_keys=args.COLUMNS)
+    print_keys(converted_keys, args.INTERVAL)
 except KeyboardInterrupt:  # Exit gracefully on ^C (SIGINT)
     exit
-
-
-# Wait for --interval if specified, otherwise wait 4 seconds.
-# time.sleep(interval or 4)  # TODO: Make this occur after, so there's no initial wait.
