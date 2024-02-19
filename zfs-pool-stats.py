@@ -190,8 +190,11 @@ def get_stats(POOL):
     zpool_keys = [("Name", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
                   ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "size"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFrag", "size"), ("StateText", "label")]
 
-    global zpool_keys_types  # Make this a global so I can access it outside of this function.
+    global zpool_keys_types  # Make this global so I can access it from other functions.
     zpool_keys_types = ('label', 'size', 'time')
+    global zpool_keys_map  # Make this global so I can access it from other functions.
+    # TODO: Find/make a more suitable function for 'label' which isn't a hacky workaround by letting conv_microseconds pass through a real string
+    zpool_keys_map = {'label': conv_microseconds, 'size': conv_bytes, 'time': conv_microseconds}
 
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
@@ -222,6 +225,7 @@ def get_stats(POOL):
     zpool = {key: conv_float(value) for key, value in zpool.items()}
 
     # Create some more dictionary entries
+    # Correctly reference keys by their full tuple names
     zpool.update({('VirtCapTot', 'size'): zpool[('VirtCapUsed', 'size')] + zpool[('VirtCapFree', 'size')]})
     zpool.update({('VirtCapUsedPerc', 'perc'): (zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size']),
                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
@@ -253,44 +257,38 @@ args = parser.parse_args()  # Returns dictionaries arg.columns, arg.interval, et
 
 ###  Run main loop  ###
 
-
+# TODO: Consider breaking the iterative conversion logic into its own function
 def print_stats_loop(pool=args.POOL, interval=args.INTERVAL, columns=args.COLUMNS):
     while True:
         # Get a new dictionary of statistics.
         stats = get_stats(pool)
 
-        # Temporarily print args for development.
-        # print(f"POOL: {args.POOL}")
-        # print(f"INTERVAL: {args.INTERVAL}")
-        # print(f"COLUMNS: {args.COLUMNS}")
-        # print(f"stats: {stats}")
+        # Wait for --interval if specified, otherwise wait 4 seconds.
+        time.sleep(interval or 4)  # TODO: Make this occur after printing columns (once done developing).
 
-        # Wait for --interval if specified, otherwise 4 seconds.
-        # TODO: Make this occur after printing columns (once done developing).
-        time.sleep(interval or 4)
-
-        # Print the dictionary in a nice format
-        # print_dict(stats)
-
-        # Print the user's specified --columns:
+        # Iterate through the user's specified --columns:
         for column, notation in columns.items():
+            # Try all 3 possible permutations of key_name in {stats}.
+            #   NOTE: This is because each key of {stats} is a tuple of (key_name, key_type),
+            #   but we want to access the key by just key_name, hence this workaround.
+            #   I could consider specifying key_type in zpool_vals instead of zpool_keys,
+            #   however this would be very painful given the way zpool_vals is populated and manipulated.
+            for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {stats}
+                key_name = (column, key_type)  # Construct a tuple to properly match key_name to {stats}
+                if key_name in stats:  # Proceed once the correct match for key_name has been found
+                    # Check which function to use for conversion
+                    key_use_func = zpool_keys_map.get(key_name[1])
 
-            # Try all 3 possible permutations of key name in {stats}.
-            # NOTE: This is because each key of {stats} is a tuple of (key_name, key_type),
-            # but we want to access the key by just key_name, hence this workaround.
-            # I could consider specifying key_type in zpool_vals instead of zpool_keys,
-            # however this would be very painful given the way zpool_vals is populated and manipulated.
-            for type in zpool_keys_types:  # Try all three [key_type]s to brute-force match against {stats[key]}
-                key_tuple = (column, type)  # Construct a tuple to properly match against {stats}
-                if key_tuple in stats:  # Proceed once the correct match for key_name has been found
-                    # Check key_type and handle appropriately
-                    # Map each key_type to an appropriate conversion function
+                    # Construct a dictionary of user-specified --columns, with user-specified formatting and conversions:
+                    rename_me = {}
+                    rename_me.update({column: key_use_func(stats[key_name])})
 
-                    key_type_funcs = {'label': conv_microseconds, 'size': conv_bytes, 'time': conv_microseconds}
-                    use_func = key_type_funcs.get(key_tuple[1], None)
+            print("Column", rename_me)
 
                     # Print everything for debugging
-                    # print(f"{column} : {notation[0]} : {stats[key_tuple]} : {use_func} : {use_func(stats[key_tuple])}")
-
-
-print_stats_loop()
+                    # print(f"{column} : {notation[0]} : {stats[key_tuple]} : {key_use_func} : {key_use_func(stats[key_tuple])}")
+                    # print(f"stats: {stats}")
+try:
+    print_stats_loop()
+except KeyboardInterrupt:  # Exit gracefully on SIGINT ^C
+    exit
