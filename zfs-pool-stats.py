@@ -276,7 +276,7 @@ def convert_keys(stats=get_stats(args.POOL), columns=args.COLUMNS):
     Returns:
         A dictionary consisting of original keys and CONVERTED values."""
     # Construct a dictionary of user-specified --columns and notations:
-    rename_me = {}
+    (converted_keys) = {}
 
     # Iterate through the user's specified --columns:
     for column, notation in columns.items():
@@ -291,13 +291,13 @@ def convert_keys(stats=get_stats(args.POOL), columns=args.COLUMNS):
                 key_use_func = zpool_keys_map.get(key_name[1])
 
                 # Populate the dictionary of user-specified --columns and notations:
-                rename_me.update({column: key_use_func(stats[key_name], notation)})
+                (converted_keys).update({column: key_use_func(stats[key_name], notation)})
 
                 # Print everything for debugging
                 # print(f"{column} : {notation[0]} : {stats[key_name]} : {key_use_func} : {key_use_func(stats[key_name])}")
                 # print(f"stats: {stats}")
 
-    return(rename_me)
+    return(converted_keys)
 
 
 try:
