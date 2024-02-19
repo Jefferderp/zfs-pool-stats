@@ -3,6 +3,7 @@ import subprocess
 import math
 import argparse
 import time
+import pdb
 
 """ TODO FEATURES:
 * Repeated output in aligned columns with automatic minimum width
@@ -130,7 +131,7 @@ def conv_microseconds(time, notation="",):
     """Convert microsecond values to a specified notation. Accepts microseconds as output by `zpool iostat -p`.
 
     Args:
-        time: The microsecond value (int or float) to convert.
+        microseconds: The microsecond value (int or float) to convert.
         notation: The desired notation ('d', 'h', 'm', 's', 'ms', 'us').
             If unspecified, automatically chooses the highest notation.
 
@@ -214,10 +215,10 @@ def get_stats(POOL):
         ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
     # shell_cmd("zpool status " + POOL + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
-    # Merge keys and values lists into a dictionary
+    # Merge keys and values lists into a dictionary.
     zpool = dict(zip(zpool_keys, zpool_vals))
 
-    # Convert all eligible values to floats, so we can do math
+    # Convert all eligible values to floats, so we can do math.
     zpool = {key: conv_float(value) for key, value in zpool.items()}
 
     # Create some more dictionary entries
@@ -226,7 +227,7 @@ def get_stats(POOL):
                   ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
                   ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
 
-    return zpool  # Finally return the {zpool} dictionary for further use
+    return zpool
 
 
 ###  Accept arguments  ###
@@ -245,7 +246,7 @@ parser.add_argument('--pool', '-p', dest="POOL", type=str,
                     help='The name of the pool to report statistics for. For example:  --pool tank ')
 args = parser.parse_args()  # Returns dictionaries arg.columns, arg.interval, etc.
 
-# Temporarily specify arguments internally for development
+# Temporarily specify arguments internally for development.
 # args.POOL = "amalgm"
 # args.INTERVAL = 1
 # args.COLUMNS = ""
@@ -255,16 +256,16 @@ args = parser.parse_args()  # Returns dictionaries arg.columns, arg.interval, et
 
 def print_stats_loop(pool=args.POOL, interval=args.INTERVAL, columns=args.COLUMNS):
     while True:
-        # Get a new dictionary of statistics
+        # Get a new dictionary of statistics.
         stats = get_stats(pool)
 
-        # Temporarily print args for development
+        # Temporarily print args for development.
         # print(f"POOL: {args.POOL}")
         # print(f"INTERVAL: {args.INTERVAL}")
         # print(f"COLUMNS: {args.COLUMNS}")
-        print(f"stats: {stats}")
+        # print(f"stats: {stats}")
 
-        # Wait for --interval, or wait 4 seconds if unspecified:
+        # Wait for --interval if specified, otherwise 4 seconds.
         # TODO: Make this occur after printing columns (once done developing).
         time.sleep(interval or 4)
 
@@ -272,18 +273,24 @@ def print_stats_loop(pool=args.POOL, interval=args.INTERVAL, columns=args.COLUMN
         # print_dict(stats)
 
         # Print the user's specified --columns:
-        for column, notation in args.COLUMNS.items():
+        for column, notation in columns.items():
 
             # Try all 3 possible permutations of key name in {stats}.
-            # This is because each key of {stats} is a tuple of (key_name, key_type),
-            # but we want to reference the key by just key_name, hence this workaround.
+            # NOTE: This is because each key of {stats} is a tuple of (key_name, key_type),
+            # but we want to access the key by just key_name, hence this workaround.
             # I could consider specifying key_type in zpool_vals instead of zpool_keys,
-            # however this would be very painful given the way zpool_vals is populated.
-            for i in zpool_keys_types:  # Try all three [key_types] to brute-force match against {stats}
-                key = (column, i)  # Construct a tuple to properly match against {stats}
-                if key in stats:
-                    print(f"{column} : {notation[0]} : {stats[key]}")
-                    break  # exit the loop once we've found the key
+            # however this would be very painful given the way zpool_vals is populated and manipulated.
+            for type in zpool_keys_types:  # Try all three [key_type]s to brute-force match against {stats[key]}
+                key_tuple = (column, type)  # Construct a tuple to properly match against {stats}
+                if key_tuple in stats:  # Proceed once the correct match for key_name has been found
+                    # Check key_type and handle appropriately
+                    # Map each key_type to an appropriate conversion function
+
+                    key_type_funcs = {'label': conv_microseconds, 'size': conv_bytes, 'time': conv_microseconds}
+                    use_func = key_type_funcs.get(key_tuple[1], None)
+
+                    # Print everything for debugging
+                    # print(f"{column} : {notation[0]} : {stats[key_tuple]} : {use_func} : {use_func(stats[key_tuple])}")
 
 
 print_stats_loop()
