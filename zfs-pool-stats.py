@@ -8,6 +8,7 @@ import pdb
 """ TODO FEATURES:
 * Repeated output in aligned columns with automatic minimum width
 * Upgrade conv_microseconds() to round up by length (99s > 1.65m), instead of time (59s > 1m)
+* Standardize all input flags to lowercase handling
 Add to conv_bytes():
 * Up/down/nearest rounding preference per-invocation or per-value
 * A sticky header with ["stateHealth"] and ["stateText"]
@@ -23,12 +24,12 @@ Add to conv_bytes():
       which are highly unlikely to change drastically in a brief time window. These are:
       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
       VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
-* Implement multiple simultaneous pool outputs
 * Restore shell_cmd() lines commented out and remove placeholder lists
 * Change shell_cmd() to run locally instead of remotely
 * Try removing the need for math module
 * Implement threading or async so that the delay inherent to get_stats() does not
   add to the delay already specified by --interval
+* Implement multiple simultaneous pool outputs
 """
 
 
@@ -53,7 +54,7 @@ def parse_complex_arg(string):
                 key, *value = i.split(':')
             # If no ':' separators, don't attempt to split non-existent Sub-arguments.
             else:
-                key, value = i, [""]  # Assign value to a list containing an empty string, for consistency.
+                key, value = i, None
             arguments[key] = value
         # Return a dictionary of Primary arguments (as keys) and Sub-arguments (as a list of values).
         return arguments
@@ -124,7 +125,7 @@ def conv_float(value):
         return value
 
 
-def conv_bytes(bytes, notation=''):
+def conv_bytes(bytes, notation=None):
     """Convert byte values to a specified notation. Uses powers of 1024 as output by `zfs get`.
 
     Args:
@@ -140,7 +141,7 @@ def conv_bytes(bytes, notation=''):
 
     notations = ("B", "K", "M", "G", "T", "P", "E")
 
-    if notation == '':  # Automatic unit scaling, if not specified.
+    if notation is None:  # Automatic unit scaling, if not specified.
         i = int(math.floor(math.log(bytes, 1024)))  # Math, how does it work?!
         p = math.pow(1024, i)
         return f"{round(bytes / p)}{notations[i]}"
@@ -154,7 +155,7 @@ def conv_bytes(bytes, notation=''):
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
-def conv_microseconds(microseconds, notation=''):
+def conv_microseconds(microseconds, notation=None):
     """Convert microsecond values to a specified notation. Uses microseconds to align with `zpool iostat -p`.
 
     Args:
@@ -169,7 +170,8 @@ def conv_microseconds(microseconds, notation=''):
         return microseconds
 
     notations = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
-    if notation == '':  # Automatic unit scaling, if not specified.
+
+    if notation is None:  # Automatic unit scaling, if not specified.
         for i, key in enumerate(notations):
             if microseconds >= (notations[key] - 0.0001):  # Subtract a small rounding tolerance
                 divisor = notations[key]
@@ -261,43 +263,43 @@ def get_stats(pool):
     return zpool
 
 
-# TODO: Rename "columns" and "stats" to be more generic
 # TODO: Change default parameters to be more agnostic
-def convert_keys(stats=get_stats(args.POOL), columns=args.COLUMNS):
+def convert_keys(ref_keys=get_stats(args.POOL), conv_keys=args.COLUMNS):
     """Convert the values in a dictionary from raw integer/time values to human-readable notation.
 
     Args:
-        stats: A dictionary containing raw values to be CONVERTED to human-readable notation.
-               Dictionary keys must be in a nested tuple format, as returned by get_stats().
-        columns: A dictionary containing keys to be matched against {stats}. Keys found in both
-                 dictionaries will have their corresponding values in {stats} CONVERTED.
-                 Only keys found in both {columns} and {stats} will be returned.
+        ref_keys:  A dictionary containing raw values to be converted to human-readable notation.
+                   Dictionary keys must be in a nested tuple format, as returned by get_stats().
+        conv_keys: A dictionary containing keys to be matched against {ref_keys}. Keys found in
+                   both dictionaries will have their corresponding values in {ref_keys} converted.
+                   Keys found in both dictionaries will have their values extracted from {ref_keys},
+                   converted to human-readable notation, and returned as a new dictionary.
 
     Returns:
-        A dictionary consisting of original keys and CONVERTED values."""
-    # Construct a dictionary of user-specified --columns and notations:
-    (converted_keys) = {}
+        A dictionary of keys common to both {ref_keys} and {conv_keys}, with values converted."""
 
-    # Iterate through the user's specified --columns:
-    for column, notation in columns.items():
-        # Try all 3 possible permutations of key_name in {stats}.
-        #   NOTE: This is because each key of {stats} is a tuple of (key_name, key_type) but we want to
-        #   access the key by just key_name, hence this crutch. I could consider specifying key_type in
-        #   zpool_vals instead of zpool_keys, however this may be impractical.
-        for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {stats}
-            key_name = (column, key_type)  # Construct a tuple to properly match key_name to {stats}
-            if key_name in stats:  # Proceed once the correct match for key_name has been found
+    output = {}
+
+    for key, notation in conv_keys.items():
+        # Try all 3 possible permutations of key_match in {ref_keys}.
+        #   NOTE: This is because each key of {ref_keys} is a tuple of (key_match, key_type) but
+        #   we want to access the key by just key_match, hence this crutch. Maybe we could
+        #   specify key_type in zpool_vals instead of zpool_keys, however this may be impractical.
+        for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {ref_keys}
+            key_match = (key, key_type)  # Construct a tuple to properly match key_match against {ref_keys}
+            if key_match in ref_keys:  # Proceed once the correct match for key_match has been found
                 # Check which function to use for conversion
-                key_use_func = zpool_keys_map.get(key_name[1])
+                # zpool_keys_map is defined in get_stats()
+                key_use_func = zpool_keys_map.get(key_match[1])
 
-                # Populate the dictionary of user-specified --columns and notations:
-                (converted_keys).update({column: key_use_func(stats[key_name], notation)})
+                # Calculate notation and append the key from {conv_keys} to {output}:
+                output.update({key: key_use_func(ref_keys[key_match], notation)})
 
                 # Print everything for debugging
-                # print(f"{column} : {notation[0]} : {stats[key_name]} : {key_use_func} : {key_use_func(stats[key_name])}")
-                # print(f"stats: {stats}")
+                # print(f"{key} : {notation[0]} : {ref_keys[key_match]} : {key_use_func} : {key_use_func(ref_keys[key_match])}")
+                # print(f"ref_keys: {ref_keys}")
 
-    return(converted_keys)
+    return (output)
 
 
 try:
