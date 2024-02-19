@@ -31,11 +31,10 @@ Add to conv_bytes():
   add to the delay already specified by --interval
 """
 
-###  Define functions  ###
-
 
 def parse_complex_arg(string):
     """Parse a flag argument in format 'Main:SubArg1:SubArg2' and intelligently split into a dictionary.
+    Used by the parser module to handle complex/structured flags.
 
     Args:
         string: The raw flag (string) to be parsed and split.
@@ -60,6 +59,33 @@ def parse_complex_arg(string):
         return arguments
     except ValueError:
         raise argparse.ArgumentTypeError("ERROR: Invalid format for --columns. Use Column1,Column2, ... ")
+
+###  Accept arguments  ###
+
+
+# Define arguments parser
+parser = argparse.ArgumentParser()
+
+# Construct args.COLUMNS dictionary
+parser.add_argument('--columns', '-c', dest="COLUMNS", type=parse_complex_arg,
+                    help='A comma-separated list of columns to output. Optionally specify :scale. \
+                          For example:  --columns pool,StateHealth,VirtCapFree:T ')
+
+# Construct args.INTERVAL dictionary
+parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
+                    help='The frequency of time (in seconds) to output statistics. Accepts whole or decimal numbers. \
+                          This also affects the sampling of some delay measurements; the recommendation is 1 second \
+                          or more to allow a sufficient sampling window for collecting i/o timing statistics. \
+                          For example:  --interval 1.5 ')
+
+# Construct args.POOL dictionary
+parser.add_argument('--pool', '-p', dest="POOL", type=str,
+                    help='The name of the pool to report statistics for. For example:  --pool tank ')
+
+args = parser.parse_args()  # Expose args.COLUMNS, args.INTERVAL, etc. for reuse
+
+
+###  Define functions  ###
 
 
 def shell_cmd(cmdline):
@@ -98,37 +124,38 @@ def conv_float(value):
         return value
 
 
-def conv_bytes(size, notation=""):
+def conv_bytes(bytes, notation=''):
     """Convert byte values to a specified notation. Uses powers of 1024 as output by `zfs get`.
 
     Args:
-        size: The byte value (int or float) to convert.
+        bytes: The byte value (int or float) to convert.
         notation: The desired notation ('B', 'K', 'M', 'G', 'T', 'P', 'E').
             If unspecified, automatically chooses the highest notation.
 
     Returns:
         A string representing the byte value expressed in the chosen notation."""
     # Handle 0 and strings. Return them unmodified.
-    if size == 0 or isinstance(size, str):
-        return size
+    if bytes == 0 or isinstance(bytes, str):
+        return bytes
 
     notations = ("B", "K", "M", "G", "T", "P", "E")
 
-    if notation == "":  # Automatic unit scaling, if not specified.
-        i = int(math.floor(math.log(size, 1024)))  # Math, how does it work?!
+    if notation == '':  # Automatic unit scaling, if not specified.
+        i = int(math.floor(math.log(bytes, 1024)))  # Math, how does it work?!
         p = math.pow(1024, i)
-        return f"{round(size / p)}{notations[i]}"
+        return f"{round(bytes / p)}{notations[i]}"
 
     try:  # Manual unit scaling, if specified.
+        notation = str(notation[0])
         index = notations.index(notation.upper())  # Find index of target notation
         divisor = 1024 ** index  # Calculate byte value to divide by
-        return f"{round(size / divisor)}{notation}"
+        return f"{round(bytes / divisor)}{notation}"
     except ValueError:
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
-def conv_microseconds(time, notation="",):
-    """Convert microsecond values to a specified notation. Accepts microseconds as output by `zpool iostat -p`.
+def conv_microseconds(microseconds, notation=''):
+    """Convert microsecond values to a specified notation. Uses microseconds to align with `zpool iostat -p`.
 
     Args:
         microseconds: The microsecond value (int or float) to convert.
@@ -138,21 +165,21 @@ def conv_microseconds(time, notation="",):
     Returns:
         A string representing the time value expressed in the chosen notation."""
     # Handle 0 and strings. Return them unmodified.
-    if time == 0 or isinstance(time, str):
-        return time
+    if microseconds == 0 or isinstance(microseconds, str):
+        return microseconds
 
     notations = {"d": 86400000000, "h": 3600000000, "m": 60000000, "s": 1000000, "ms": 1000, "us": 1}
-
-    if notation == "":  # Automatic unit scaling, if not specified.
+    if notation == '':  # Automatic unit scaling, if not specified.
         for i, key in enumerate(notations):
-            if time >= (notations[key] - 0.0001):  # Include a small (0.0001) floating-point rounding tolerance
+            if microseconds >= (notations[key] - 0.0001):  # Subtract a small rounding tolerance
                 divisor = notations[key]
                 notation = key
                 break  # Exit the loop once the appropriate unit is found
-        return f"{round(time / divisor)}{notation}"
+        return f"{round(microseconds / divisor)}{notation}"
 
     try:  # Manual unit scaling, if specified.
-        return f"{round(time / notations[notation])}{notation}"
+        notation = str(notation[0])
+        return f"{round(microseconds / notations[notation])}{notation}"
     except KeyError:
         print(f"ValueError: {notation} is not one of: {notations}")
 
@@ -174,7 +201,7 @@ def print_dict(struct):
             print(f"{key} : {value}")
 
 
-def get_stats(POOL):
+def get_stats(pool):
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
     Args:
         pool: The name of the ZFS pool to collect statistics on.
@@ -198,25 +225,25 @@ def get_stats(POOL):
 
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
-    # shell_cmd("zpool iostat -Hypl " + POOL + " " + REPEAT_DELAY + " " + "1").split()
+    # shell_cmd("zpool iostat -Hypl " + pool + " " + REPEAT_DELAY + " " + "1").split()
 
     zpool_vals.extend(["54866186481664", "12908397449216", "1.01", "54700434006016"])
-    # shell_cmd("zfs get used,available,compressratio,usedbychildren " + POOL + " -Hp -d 0 -o value | tr '\n' ' '").split()
+    # shell_cmd("zfs get used,available,compressratio,usedbychildren " + pool + " -Hp -d 0 -o value | tr '\n' ' '").split()
 
     # TODO: This `zfs get usedbysnapshots` command is very slow, because it's recursively checking
     #       all snapshots sizes (`-r`) and summing them (`awk`) before returning. Alternative?
     #       Also, this method with `grep` and `awk` is very clunky and may break with future `zfs` versions.
     #       Parsing and addition should be performed locally.
     zpool_vals.extend(["1381425606656"])
-    # shell_cmd("zfs get usedbysnapshots " + POOL + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
+    # shell_cmd("zfs get usedbysnapshots " + pool + " -Hp -r -o value | grep -v '-' | awk '{s+=$1} END {printf \"%.0f\", s}'").split())
 
     zpool_vals.extend(["ONLINE", "20%"])
-    # shell_cmd("zpool list -H -o health,frag " + POOL)
+    # shell_cmd("zpool list -H -o health,frag " + pool)
 
     # TODO: Clean up this `zpool status` command and perform text parsing locally instead.
     zpool_vals.extend(
         ["scan: scrub repaired 0B in 1 days 12:59:37 with 0 errors on Sat Jan 27 22:59:39 2024 remove: Removal of mirror canceled on Tue Jan  9 08:30:58 2024"])
-    # shell_cmd("zpool status " + POOL + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
+    # shell_cmd("zpool status " + pool + " | sed -n '3,$p' | tr '\n' ' ' | tr -d '\011\012' | sed -e 's/^[ \t]*//' | " + "sed --regexp-extended 's/ config\:.*//g'")
 
     # Merge keys and values lists into a dictionary.
     zpool = dict(zip(zpool_keys, zpool_vals))
@@ -234,61 +261,51 @@ def get_stats(POOL):
     return zpool
 
 
-###  Accept arguments  ###
+# TODO: Rename "columns" and "stats" to be more generic
+# TODO: Change default parameters to be more agnostic
+def convert_keys(stats=get_stats(args.POOL), columns=args.COLUMNS):
+    """Convert the values in a dictionary from raw integer/time values to human-readable notation.
+
+    Args:
+        stats: A dictionary containing raw values to be CONVERTED to human-readable notation.
+               Dictionary keys must be in a nested tuple format, as returned by get_stats().
+        columns: A dictionary containing keys to be matched against {stats}. Keys found in both
+                 dictionaries will have their corresponding values in {stats} CONVERTED.
+                 Only keys found in both {columns} and {stats} will be returned.
+
+    Returns:
+        A dictionary consisting of original keys and CONVERTED values."""
+    # Construct a dictionary of user-specified --columns and notations:
+    rename_me = {}
+
+    # Iterate through the user's specified --columns:
+    for column, notation in columns.items():
+        # Try all 3 possible permutations of key_name in {stats}.
+        #   NOTE: This is because each key of {stats} is a tuple of (key_name, key_type) but we want to
+        #   access the key by just key_name, hence this crutch. I could consider specifying key_type in
+        #   zpool_vals instead of zpool_keys, however this may be impractical.
+        for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {stats}
+            key_name = (column, key_type)  # Construct a tuple to properly match key_name to {stats}
+            if key_name in stats:  # Proceed once the correct match for key_name has been found
+                # Check which function to use for conversion
+                key_use_func = zpool_keys_map.get(key_name[1])
+
+                # Populate the dictionary of user-specified --columns and notations:
+                rename_me.update({column: key_use_func(stats[key_name], notation)})
+
+                # Print everything for debugging
+                # print(f"{column} : {notation[0]} : {stats[key_name]} : {key_use_func} : {key_use_func(stats[key_name])}")
+                # print(f"stats: {stats}")
+
+    return(rename_me)
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--columns', '-c', dest="COLUMNS", type=parse_complex_arg,
-                    help='A comma-separated list of columns to output. Optionally specify :scale. \
-                          For example:  --columns pool,StateHealth,VirtCapFree:T ')
-parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
-                    help='The frequency of time (in seconds) to output statistics. Accepts whole or decimal numbers. \
-                          This also affects the sampling of some delay measurements; the recommendation is 1 second \
-                          or more to allow a sufficient sampling window for collecting i/o timing statistics. \
-                          For example:  --interval 1.5 ')
-parser.add_argument('--pool', '-p', dest="POOL", type=str,
-                    help='The name of the pool to report statistics for. For example:  --pool tank ')
-args = parser.parse_args()  # Returns dictionaries arg.columns, arg.interval, etc.
-
-# Temporarily specify arguments internally for development.
-# args.POOL = "amalgm"
-# args.INTERVAL = 1
-# args.COLUMNS = ""
-
-###  Run main loop  ###
-
-# TODO: Consider breaking the iterative conversion logic into its own function
-def print_stats_loop(pool=args.POOL, interval=args.INTERVAL, columns=args.COLUMNS):
-    while True:
-        # Get a new dictionary of statistics.
-        stats = get_stats(pool)
-
-        # Wait for --interval if specified, otherwise wait 4 seconds.
-        time.sleep(interval or 4)  # TODO: Make this occur after printing columns (once done developing).
-
-        # Iterate through the user's specified --columns:
-        for column, notation in columns.items():
-            # Try all 3 possible permutations of key_name in {stats}.
-            #   NOTE: This is because each key of {stats} is a tuple of (key_name, key_type),
-            #   but we want to access the key by just key_name, hence this workaround.
-            #   I could consider specifying key_type in zpool_vals instead of zpool_keys,
-            #   however this would be very painful given the way zpool_vals is populated and manipulated.
-            for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {stats}
-                key_name = (column, key_type)  # Construct a tuple to properly match key_name to {stats}
-                if key_name in stats:  # Proceed once the correct match for key_name has been found
-                    # Check which function to use for conversion
-                    key_use_func = zpool_keys_map.get(key_name[1])
-
-                    # Construct a dictionary of user-specified --columns, with user-specified formatting and conversions:
-                    rename_me = {}
-                    rename_me.update({column: key_use_func(stats[key_name])})
-
-            print("Column", rename_me)
-
-                    # Print everything for debugging
-                    # print(f"{column} : {notation[0]} : {stats[key_tuple]} : {key_use_func} : {key_use_func(stats[key_tuple])}")
-                    # print(f"stats: {stats}")
 try:
-    print_stats_loop()
-except KeyboardInterrupt:  # Exit gracefully on SIGINT ^C
+    converted_keys = convert_keys()
+    print(converted_keys)
+except KeyboardInterrupt:  # Exit gracefully on ^C (SIGINT)
     exit
+
+
+# Wait for --interval if specified, otherwise wait 4 seconds.
+# time.sleep(interval or 4)  # TODO: Make this occur after, so there's no initial wait.
