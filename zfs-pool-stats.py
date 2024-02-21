@@ -301,55 +301,68 @@ def convert_keys(ref_keys, conv_keys):
 
     return (output)
 
-# TODO: Add a repeat=True/False control parameter to print(keys) ###
+
+def get_keys_width(input_dict):
+    """For each key and value pair in input_dict, calculate the maximum length of both. Return a new dictionary.
+
+    Args:
+        input_dict: The input dictionary to perform length calculations on.
+
+    Returns:
+        A new dictionary. Keys are identical to those in input_dict. Values are integers indicating
+        the maximum length in characters of each (key, value) of input_dict, whichever was greater."""
+    column_widths = {}
+
+    # Construct a dictionary, where:
+    # keys = same as {input_dict}
+    # values = the maximum string length of each (key and value) in {input_dict}
+    for key, value in input_dict.items():
+        max_width = max(len(str(key)), len(str(value)))
+        column_widths[key] = max_width + 2
+    return column_widths
 
 
-def print_keys(input_dict, interval):
-    """Print out a dictionary as defined by input_dict, on a loop as determined by interval.
+def print_columns(input_dict, interval=4, repeat=True):
+    """On a loop, print out a dictionary in columns with automatic whitespace padding per-column.
 
     Args:
         input_dict: The input dictionary to be output at each interval.
         interval: The delay in seconds (float) between outputs.
-        run: Whether to run this function. If False, exit without doing anything.
+        repeat: (bool) Whether to loop at a frequency specified by interval, or just once. (Default: True)
 
     Returns:
-        None"""
+        Does not return"""
 
-    # Print columns forever and ever and ever and...
+    # Determine the minimum width of each column.
+    column_widths = get_keys_width(input_dict)
+
+    # Output in aligned columns, as specified in {column_widths} from calc_column_widths()
+
+    # Assemble header column as combined strings
+    header = ""
+    for key in input_dict:
+        header += f"{key:<{column_widths[key]}}"
+
+    # Print combined header string
+    print(header)
+
+    # Print values forever and ever and ever and...
     while True:
 
-        # Determine the minimum width of each column.
-        # Create a dictionary where keys = input_dict and values = each column's minimum width.
-        # Calculate each column width based on the max string length of each pair of key and value.
-        def calc_columns_widths(input_dict):
-            column_widths = {}
-
-            for key, value in input_dict.items():
-                max_width = max(len(str(key)), len(str(value)))
-                column_widths[key] = max_width + 2
-            return column_widths
-
-        column_widths = calc_columns_widths(input_dict)
-
-        # Print each key, value in columns.
-        # Output in aligned columns, as specified in {column_widths} from calc_column_widths()
-
-        # Assemble columns first as header and values strings
-        header = ""
-        for key in input_dict:
-            header += f"{key:<{column_widths[key]}}"
-
+        # Assemble values column as combined strings
         values = ""
         for key, value in input_dict.items():
             values += f"{value:<{column_widths[key]}}"
 
-        # Finally print assembled header and values
-        print(header)
+        # Print combined strings of all keys and values
         print(values)
 
-        time.sleep(interval or 4)
-
-        return None
+        # Check if we should continue running in a loop        
+        if repeat:
+            # Wait between runs
+            time.sleep(interval)
+        else:
+            break
 
 
 ###  Run output  ###
@@ -358,6 +371,6 @@ def print_keys(input_dict, interval):
 try:
     raw_stats = get_stats(args.POOL)
     converted_keys = convert_keys(ref_keys=raw_stats, conv_keys=args.COLUMNS)
-    print_keys(converted_keys, args.INTERVAL)
+    print_columns(converted_keys, args.INTERVAL, repeat=True)
 except KeyboardInterrupt:  # Exit gracefully on ^C (SIGINT)
     exit
