@@ -6,6 +6,8 @@ import time
 import pdb
 
 """ TODO:
+* Set default script parameters if no flags passed
+* Shorten length of key names in {zpool_keys} in preparation for column output, where width is at a premium
 * Strip whitespace from args.COLUMNS to prevent dictionary key mis-matches, causing failure to print.
 * Standardize all input flags to lowercase handling
 * Repeated output in aligned columns with automatic minimum width
@@ -299,8 +301,10 @@ def convert_keys(ref_keys, conv_keys):
 
     return (output)
 
+# TODO: Add a repeat=True/False control parameter to print(keys) ###
 
-def print_keys(input_dict, interval, execute=True):
+
+def print_keys(input_dict, interval):
     """Print out a dictionary as defined by input_dict, on a loop as determined by interval.
 
     Args:
@@ -311,14 +315,34 @@ def print_keys(input_dict, interval, execute=True):
     Returns:
         None"""
 
-    while execute:
+    # Print columns forever and ever and ever and...
+    # while True:
+
+    # Determine the minimum width of each column.
+    # Create a dictionary where keys = input_dict and values = each column's minimum width.
+    # Calculate each column width based on the max string length of each pair of key and value.
+    def calc_columns_widths(input_dict):
+        column_widths = {}
+
         for key, value in input_dict.items():
-            print(f"{key} : {value}")
-        time.sleep(interval or 4)
-    
+            max_width = max(len(str(key)), len(str(value)))
+            column_widths[key] = max_width
+        return column_widths
+
+    column_widths = calc_columns_widths(input_dict)
+
+    # Print each key, value in columns
+    # Print in aligned columns, as specified in {column_widths} from calc_column_widths()
+    for key, value in input_dict.items():
+        print(f"{key} ::: {value} ::: {column_widths[key]}")
+
+    time.sleep(interval or 4)
+
     return None
 
+
 ###  Run output  ###
+
 
 try:
     raw_stats = get_stats(args.POOL)
