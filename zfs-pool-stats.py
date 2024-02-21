@@ -316,29 +316,40 @@ def print_keys(input_dict, interval):
         None"""
 
     # Print columns forever and ever and ever and...
-    # while True:
+    while True:
 
-    # Determine the minimum width of each column.
-    # Create a dictionary where keys = input_dict and values = each column's minimum width.
-    # Calculate each column width based on the max string length of each pair of key and value.
-    def calc_columns_widths(input_dict):
-        column_widths = {}
+        # Determine the minimum width of each column.
+        # Create a dictionary where keys = input_dict and values = each column's minimum width.
+        # Calculate each column width based on the max string length of each pair of key and value.
+        def calc_columns_widths(input_dict):
+            column_widths = {}
 
+            for key, value in input_dict.items():
+                max_width = max(len(str(key)), len(str(value)))
+                column_widths[key] = max_width + 2
+            return column_widths
+
+        column_widths = calc_columns_widths(input_dict)
+
+        # Print each key, value in columns.
+        # Output in aligned columns, as specified in {column_widths} from calc_column_widths()
+
+        # Assemble columns first as header and values strings
+        header = ""
+        for key in input_dict:
+            header += f"{key:<{column_widths[key]}}"
+
+        values = ""
         for key, value in input_dict.items():
-            max_width = max(len(str(key)), len(str(value)))
-            column_widths[key] = max_width
-        return column_widths
+            values += f"{value:<{column_widths[key]}}"
 
-    column_widths = calc_columns_widths(input_dict)
+        # Finally print assembled header and values
+        print(header)
+        print(values)
 
-    # Print each key, value in columns
-    # Print in aligned columns, as specified in {column_widths} from calc_column_widths()
-    for key, value in input_dict.items():
-        print(f"{key} ::: {value} ::: {column_widths[key]}")
+        time.sleep(interval or 4)
 
-    time.sleep(interval or 4)
-
-    return None
+        return None
 
 
 ###  Run output  ###
