@@ -3,7 +3,9 @@ import subprocess
 import math
 import argparse
 import time
-import pdb
+import curses
+import random
+
 
 """ TODO:
 * Set default script parameters if no flags passed
@@ -329,9 +331,7 @@ def print_columns(input_dict, interval=4, repeat=True):
         input_dict: The input dictionary to be output at each interval.
         interval: The delay in seconds (float) between outputs.
         repeat: (bool) Whether to loop at a frequency specified by interval, or just once. (Default: True)
-
-    Returns:
-        Does not return"""
+    """
 
     # Determine the minimum width of each column.
     column_widths = get_keys_width(input_dict)
@@ -343,31 +343,52 @@ def print_columns(input_dict, interval=4, repeat=True):
     for key in input_dict:
         header += f"{key:<{column_widths[key]}}"
 
-    # Print combined header string
-    print(header)
+    # Assemble values column as combined strings
+    values = ""
+    for key, value in input_dict.items():
+        values += f"{value:<{column_widths[key]}}"
 
-    # Print values forever and ever and ever and...
-    while True:
+    # Cast some curses
+    def stdscr(stdscr, header, values):
+        stdscr.clear()  # Clear the screen
+        stdscr.scrollok(True)  # Enable scrolling
+        curses.echo()  # Echo stdin
 
-        # Assemble values column as combined strings
-        values = ""
-        for key, value in input_dict.items():
-            values += f"{value:<{column_widths[key]}}"
+        # Define curses scrolling region
+        scr_height, scr_width = stdscr.getmaxyx()  # Get screen dimensions
+        scr_row = 0  # Set first row for values to begin printing on
 
-        # Print combined strings of all keys and values
-        print(values)
+        # Print header initially
+        stdscr.addstr(1, 0, header + "\n")  # Print columns header on first line
 
-        # Check if we should continue running in a loop        
-        if repeat:
-            # Wait between runs
-            time.sleep(interval)
-        else:
-            break
+        # Print forever and ever and ever and...
+        while True:
+                # Keep track of screen height to avoid errors with printing out of bounds
+                scr_row += 1
+                if scr_row >= scr_height:
+                    scr_row = scr_height - 1
+
+                stdscr.addstr(1, 0, header + "\n")  # Repeatedly print columns header on first line
+                # TODO: Remove debug random.randint() value
+                stdscr.addstr(scr_row, 0, f"{values} {random.randint(100, 999)} \n") # Repeatedly print latest values
+                stdscr.refresh()
+
+                time.sleep(0.2)
+
+    curses.wrapper(stdscr, header, values)
+
+    # Print combined strings of all keys and values
+    # print(values)
+
+    # # Check if we should continue running in a loop
+    # if repeat:
+    #     # Wait between runs
+    #     time.sleep(interval)
+    # else:
+    #     break
 
 
 ###  Run output  ###
-
-
 try:
     raw_stats = get_stats(args.POOL)
     converted_keys = convert_keys(ref_keys=raw_stats, conv_keys=args.COLUMNS)
