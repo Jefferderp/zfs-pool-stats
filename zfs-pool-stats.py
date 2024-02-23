@@ -363,29 +363,24 @@ def print_columns(input_dict, interval=4, repeat=True):
 
         # Print forever and ever and ever and...
         while True:
-                # Keep track of screen height to avoid errors with printing out of bounds
-                scr_row += 1
-                if scr_row >= scr_height:
-                    scr_row = scr_height - 1
+            # Keep track of screen height to avoid errors with printing out of bounds
+            scr_row += 1
+            if scr_row >= scr_height:
+                scr_row = scr_height - 1
 
-                stdscr.addstr(1, 0, header + "\n")  # Repeatedly print columns header on first line
-                # TODO: Remove debug random.randint() value
-                stdscr.addstr(scr_row, 0, f"{values} {random.randint(100, 999)} \n") # Repeatedly print latest values
-                stdscr.refresh()
+            stdscr.addstr(1, 0, header + "\n")  # Repeatedly print columns header on first line
+            # TODO: Remove debug random.randint() value
+            stdscr.addstr(scr_row, 0, f"{values} {random.randint(100, 999)} \n")  # Repeatedly print latest values
+            stdscr.refresh()
 
-                time.sleep(0.2)
+            time.sleep(0.2)
 
+            # Exit after the first iteration if repeat is False:
+            if repeat is False:
+                break
+
+    # Call stdscr() sub-function because print_columns() was called
     curses.wrapper(stdscr, header, values)
-
-    # Print combined strings of all keys and values
-    # print(values)
-
-    # # Check if we should continue running in a loop
-    # if repeat:
-    #     # Wait between runs
-    #     time.sleep(interval)
-    # else:
-    #     break
 
 
 ###  Run output  ###
