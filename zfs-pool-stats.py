@@ -8,6 +8,10 @@ import random
 
 
 """ TODO:
+* When an invalid column is passed to --columns, exit with an error instead of ignoring silently.
+* Add a third sub-argument to --columns for decimal places
+* Add a fourth sub-argument to --columns for custom column names printed at runtime. Also include
+  default column names which are more sane. Or maybe scrap this idea and use sane column names to begin with.
 * Set default script parameters if no flags passed
 * Shorten length of key names in {zpool_keys} in preparation for column output, where width is at a premium
 * Strip whitespace from args.COLUMNS to prevent dictionary key mis-matches, causing failure to print.
@@ -30,7 +34,7 @@ Add to conv_bytes():
 * Add internal ingestion delays of between 5 and 15 seconds (to save CPU) for any relatively stable values,
       which are extremely unlikely to change +/- 1%. These are:
       Name, LogicCapUsed, LogicCapFree, VirtCapUsed, VirtCapFree, VirtCompRatio,
-      VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFrag, StateText
+      VirtCapUsedByChilds, VirtCapUsedBySnaps, StateHealth, StateFragPerc, StateText
 """
 
 
@@ -69,11 +73,15 @@ parser = argparse.ArgumentParser()
 
 # Construct args.COLUMNS dictionary
 parser.add_argument('--columns', '-c', dest="COLUMNS", type=parse_complex_arg,
+                    # Default columns if none specified:
+                    # TODO: VirtCapUsedPerc,VirtCompPerc are being ignored?
+                    default="PoolName,VirtCapUsed,VirtCapFree,VirtCapTot,VirtCapUsedPerc,BwRead:M,BwWrite:M,TotalwaitBoth,StateFragPerc,VirtCompPerc,VirtCapUsedBySnaps:G",
                     help='A comma-separated list of columns to output. Optionally specify :scale. \
-                          For example:  --columns pool,StateHealth,VirtCapFree:T ')
+                          For example:  --columns PoolName,StateHealth,VirtCapFree:T ')
 
 # Construct args.INTERVAL dictionary
 parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
+                    default=1.0,  # Default delay interval of 1 second, if not specified.
                     help='The frequency of time (in seconds) to output statistics. Accepts whole or decimal numbers. \
                           This also affects the sampling of some delay measurements; the recommendation is 1 second \
                           or more to allow a sufficient sampling window for collecting i/o timing statistics. \
@@ -81,6 +89,7 @@ parser.add_argument('--interval', '-t', dest="INTERVAL", type=float,
 
 # Construct args.POOL dictionary
 parser.add_argument('--pool', '-p', dest="POOL", type=str,
+                    default="amalgm",  # TODO: Retrieve default args.POOL name intelligently from the system...somehow.
                     help='The name of the pool to report statistics for. For example:  --pool tank ')
 
 args = parser.parse_args()  # Expose args.COLUMNS, args.INTERVAL, etc. for use
@@ -155,6 +164,39 @@ def conv_bytes(bytes, notation=None):
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
+def conv_str(input, notation=None):
+    """Accepts any valid input and returns a string.
+    This function is used instead of the built-in str() because str()
+    will error when receiving an invalid second parameter.
+
+    Args:
+        input: The input value to convert to a string.
+        notation: Does nothing. Exists for compatibility reasons.
+
+    Returns:
+        input formatted as a string.
+    """
+
+    return str(input)
+
+
+def conv_perc(input, notation=None):
+    """Accepts any valid input and returns a percentage value as a string.
+
+    Args:
+        input: The input value to convert to a string.
+        notation: Does nothing. Exists for compatibility reasons.
+
+    Returns:
+        input formatted as a string, with a '%' appended.
+    """
+
+    # return str(f"{(input)}%")
+    # return round(input, 2)
+    # Return a string with no leading/trailing decimals, and append a '%'
+    return f"{input:.0%}"
+
+
 def conv_microseconds(microseconds, notation=None):
     """Convert microsecond values to a specified notation. Uses microseconds to align with `zpool iostat -p`.
 
@@ -186,26 +228,6 @@ def conv_microseconds(microseconds, notation=None):
         print(f"ValueError: {notation} is not one of: {notations}")
 
 
-def print_dict(struct):
-    """
-    Pretty-print a dictionary in format: 'key : value\n'.
-
-    This is unused except for debugging.
-    """
-    for key, value in struct.items():
-        # Special handling for tuples: only print first value from any tuple
-        if isinstance(key, tuple) and isinstance(value, tuple):  # If key and value are both tuples
-            print(f"{key[0]} : {value[0]}")
-        elif isinstance(key, tuple):  # If only key is a tuple
-            print(f"{key[0]} : {value}")
-        elif isinstance(value, tuple):  # If only value is a tuple
-            print(f"{key} : {value[0]}")
-        # If neither key or value are tuples, print them in their entirety:
-        else:
-            print(f"{key} : {value}")
-        return None
-
-
 def get_stats(pool):
     """Ingest ZFS pool statistics from `iostat`, `zfs get` and `zpool status` system commands.
     Args:
@@ -218,15 +240,17 @@ def get_stats(pool):
     #       the keys and values in this dictionary will be misaligned, requiring source code adjustment.
     #       Starting from ["Name"], the values of `zpool iostat` are assigned. Starting from ["VirtCapUsed"], the values of `zfs get` are assigned.
     #       Starting from ["StateHealth"], the values of `zfs get` (again) are assigned. Starting from ["StateText"], the values of `zpool status` are assigned.
-    #       TODO: Check if StateFrag and VirtCompRatio values are not mangled by being indicated as type "size"
-    zpool_keys = [("Name", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
-                  ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "size"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFrag", "size"), ("StateText", "label")]
+    zpool_keys = [("PoolName", "label"), ("LogicCapUsed", "size"), ("LogicCapFree", "size"), ("OpsRead", "size"), ("OpsWrite", "size"), ("BwRead", "size"), ("BwWrite", "size"), ("TotalwaitRead", "time"), ("TotalwaitWrite", "time"), ("DiskwaitRead", "time"), ("DiskwaitWrite", "time"), ("SyncqwaitRead", "time"), ("SyncqwaitWrite", "time"),
+                  ("AsyncqwaitRead", "time"), ("AsyncqwaitWrite", "time"), ("ScrubWait", "time"), ("TrimWait", "time"), ("VirtCapUsed", "size"), ("VirtCapFree", "size"), ("VirtCompRatio", "label"), ("VirtCapUsedByChilds", "size"), ("VirtCapUsedBySnaps", "size"), ("StateHealth", "label"), ("StateFragPerc", "perc"), ("StateText", "label")]
 
-    global zpool_keys_types  # Make this global so I can access it from other functions.
-    zpool_keys_types = ('label', 'size', 'time')
-    global zpool_keys_map  # Make this global so I can access it from other functions.
-    # TODO: Find/make a more suitable function for 'label' which isn't a hacky workaround by letting conv_microseconds pass through a real string
-    zpool_keys_map = {'label': conv_microseconds, 'size': conv_bytes, 'time': conv_microseconds}
+    # Map zpool_keys dict to different functions, for later use.
+    # This allows us to intelligently convert to higher notations by
+    # constructing the key name as a tuple, with the first value in the
+    # tuple being the key name, and the second value being the type.
+    global zpool_keys_types
+    global zpool_keys_map
+    zpool_keys_types = ('size', 'time', 'label', 'perc')
+    zpool_keys_map = {'size': conv_bytes, 'time': conv_microseconds, 'label': conv_str, 'perc': conv_perc}
 
     zpool_vals = ["amalgm", "51567724367872", "16344298516480", "16", "0", "8468325", "0",
                   "15682379", "-", "15682379", "-", "3532", "-", "3510", "-", "-", "-"]
@@ -260,13 +284,14 @@ def get_stats(pool):
     # Correctly reference keys by their full tuple names
     zpool.update({('VirtCapTot', 'size'): zpool[('VirtCapUsed', 'size')] + zpool[('VirtCapFree', 'size')]})
     zpool.update({('VirtCapUsedPerc', 'perc'): (zpool['VirtCapUsed', 'size'] / zpool['VirtCapTot', 'size']),
-                  ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'size'] - 1,
-                  ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time']})
+                  ('VirtCompPerc', 'perc'): zpool['VirtCompRatio', 'label'] - 1,
+                  ('TotalwaitBoth', 'time'): zpool['TotalwaitRead', 'time'] + zpool['TotalwaitWrite', 'time'],
+                  ('StateFragPerc', 'perc'): zpool['StateFragPerc', 'perc'] * 0.01})
 
     return zpool
 
 
-def convert_keys(ref_keys, conv_keys):
+def conv_dict_notation(ref_keys, conv_keys):
     """Convert the values in a dictionary from raw integer/time values to human-readable notation.
 
     Args:
@@ -283,11 +308,11 @@ def convert_keys(ref_keys, conv_keys):
     output = {}
 
     for key, notation in conv_keys.items():
-        # Try all 3 possible permutations of key_match in {ref_keys}.
+        # Try all possible permutations of key_match in {ref_keys}.
         #   NOTE: This is because each key of {ref_keys} is a tuple of (key_match, key_type) but
         #   we want to access the key by just key_match, hence this crutch. Maybe we could
         #   specify key_type in zpool_vals instead of zpool_keys, however this may be impractical.
-        for key_type in zpool_keys_types:  # Try all 3 key_type to match against keys in {ref_keys}
+        for key_type in zpool_keys_types:  # Try all key_type to match against keys in {ref_keys}
             key_match = (key, key_type)  # Construct a tuple to properly match key_match against {ref_keys}
             if key_match in ref_keys:  # Proceed once the correct match for key_match has been found
                 # Check which function to use for conversion
@@ -324,13 +349,12 @@ def get_keys_width(input_dict):
     return column_widths
 
 
-def print_columns(input_dict, interval=4, repeat=True):
-    """On a loop, print out a dictionary in columns with automatic whitespace padding per-column.
+def print_columns(input_dict=conv_dict_notation(get_stats(args.POOL), args.COLUMNS), interval=args.INTERVAL):
+    """On a loop, print out a dictionary in columns format.
 
     Args:
         input_dict: The input dictionary to be output at each interval.
         interval: The delay in seconds (float) between outputs.
-        repeat: (bool) Whether to loop at a frequency specified by interval, or just once. (Default: True)
     """
 
     # Determine the minimum width of each column.
@@ -361,7 +385,6 @@ def print_columns(input_dict, interval=4, repeat=True):
         # Print header initially
         stdscr.addstr(1, 0, header + "\n")  # Print columns header on first line
 
-        # Print forever and ever and ever and...
         while True:
             # Keep track of screen height to avoid errors with printing out of bounds
             scr_row += 1
@@ -373,20 +396,19 @@ def print_columns(input_dict, interval=4, repeat=True):
             stdscr.addstr(scr_row, 0, f"{values} {random.randint(100, 999)} \n")  # Repeatedly print latest values
             stdscr.refresh()
 
-            time.sleep(0.2)
+            time.sleep(interval)
 
-            # Exit after the first iteration if repeat is False:
-            if repeat is False:
-                break
-
-    # Call stdscr() sub-function because print_columns() was called
+    # Call stdscr() sub-function
     curses.wrapper(stdscr, header, values)
 
 
 ###  Run output  ###
 try:
-    raw_stats = get_stats(args.POOL)
-    converted_keys = convert_keys(ref_keys=raw_stats, conv_keys=args.COLUMNS)
-    print_columns(converted_keys, args.INTERVAL, repeat=True)
+    # raw_stats = get_stats(args.POOL)
+    # converted_keys = convert_keys(ref_keys=raw_stats, conv_keys=args.COLUMNS)
+    # print_columns(converted_keys, args.INTERVAL)
+
+    print_columns()
+
 except KeyboardInterrupt:  # Exit gracefully on ^C (SIGINT)
     exit
