@@ -71,9 +71,8 @@ The default columns are:
 used,free,total,capacity,read,write,fragmentation,compression,snapshots
 ```
 
-Legacy column names from the unfinished prototype, such as `VirtCapUsed`,
-`BwRead`, and `StateFragPerc`, remain accepted. The old `--pool/-p` option and
-`--interval/-t` spelling also remain compatible.
+Column names use the modern names shown by `--list-columns`. The old
+`--pool/-p` option and `--interval/-t` spelling remain compatible.
 
 ## Behavior and caveats
 
@@ -84,8 +83,11 @@ Legacy column names from the unfinished prototype, such as `VirtCapUsed`,
 - Snapshot usage is the sum of `usedbysnapshots` for the pool and all descendant
   filesystems/volumes. On pools with very large dataset trees, this query can
   add overhead.
-- Output is plain text and works when redirected. The header repeats every 20
-  samples by default; use `--header-every 0` to disable repetition.
+- Output is plain text and works when redirected. In an interactive terminal,
+  the header repeats before the previous header scrolls out of the current
+  terminal height and adapts when the terminal is resized. Automatic repetition
+  is disabled when output is redirected. Use `--header-every N` to set a fixed
+  interval or `--header-every 0` to disable repetition.
 - `Ctrl-C` exits with status 130. Command and parsing failures print a concise
   message and exit with status 1 or 2.
 
@@ -101,4 +103,7 @@ and do not require ZFS.
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE). You may use, copy, modify, merge,
+publish, distribute, sublicense, and sell copies of this software, provided the
+copyright and license notices are preserved. The software is provided without
+warranty; see `LICENSE` for the full terms.

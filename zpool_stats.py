@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -58,30 +59,6 @@ COLUMN_SPECS = {
     "compression_ratio": ("ratio", "ratio"),
     "children": ("child", "bytes"),
     "snapshots": ("snap", "bytes"),
-}
-
-ALIASES = {
-    "poolname": "pool",
-    "statehealth": "health",
-    "logiccapused": "logical_used",
-    "logiccapfree": "logical_free",
-    "virtcapused": "used",
-    "virtcapfree": "free",
-    "virtcaptot": "total",
-    "virtcapusedperc": "capacity",
-    "opsread": "read_ops",
-    "opswrite": "write_ops",
-    "bwread": "read",
-    "bwwrite": "write",
-    "totalwaitread": "read_wait",
-    "totalwaitwrite": "write_wait",
-    "totalwaitboth": "total_wait",
-    "statefragperc": "fragmentation",
-    "virtcompperc": "compression",
-    "virtcompratio": "compression_ratio",
-    "virtcapusedbychilds": "children",
-    "virtcapusedbychildren": "children",
-    "virtcapusedbysnaps": "snapshots",
 }
 
 DEFAULT_COLUMNS = (
@@ -139,8 +116,21 @@ def format_time(value: float, unit: str | None = None, precision: int = 1) -> st
 
 
 def _column_key(name: str) -> str:
-    normalized = name.strip().lower().replace("-", "_")
-    return ALIASES.get(normalized.replace("_", ""), normalized)
+    return name.strip().lower().replace("-", "_")
+
+
+def header_interval(
+    configured: int | None,
+    output=None,
+    terminal_size: Callable[[], os.terminal_size] = shutil.get_terminal_size,
+) -> int:
+    """Return the current number of data rows between printed headers."""
+    if configured is not None:
+        return configured
+    output = sys.stdout if output is None else output
+    if not output.isatty():
+        return 0
+    return max(1, terminal_size().lines - 1)
 
 
 def parse_columns(value: str | None) -> list[Column]:
@@ -409,9 +399,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--header-every",
         type=nonnegative_int,
-        default=20,
+        default=None,
         metavar="N",
-        help="repeat the header every N rows; 0 disables repetition",
+        help=(
+            "repeat the header every N rows; by default use the current terminal "
+            "height, and 0 disables repetition"
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     return parser
@@ -443,15 +436,19 @@ def monitor(args: argparse.Namespace) -> int:
     if not args.no_status:
         print(status_line(args.pool), flush=True)
     printed = 0
+    rows_since_header = 0
     while args.count == 0 or printed < args.count:
         # `zpool iostat interval 1` blocks for the requested sampling window,
         # so adding a Python sleep here would double the configured interval.
         sample = collect_sample(args.pool, args.interval)
         header, row = format_row(args.parsed_columns, sample)
-        if printed == 0 or (args.header_every and printed % args.header_every == 0):
+        repeat_every = header_interval(args.header_every)
+        if printed == 0 or (repeat_every and rows_since_header >= repeat_every):
             print(header)
+            rows_since_header = 0
         print(row, flush=True)
         printed += 1
+        rows_since_header += 1
     return 0
 
 

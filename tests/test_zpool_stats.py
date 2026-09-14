@@ -1,4 +1,5 @@
 import io
+import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -73,13 +74,41 @@ class ColumnTests(unittest.TestCase):
         capacity = next(column for column in columns if column.key == "capacity")
         self.assertEqual(capacity.precision, 0)
 
-    def test_legacy_names_and_custom_format_are_supported(self):
-        columns = zpool_stats.parse_columns("VirtCapUsed:T:2:USED,BwRead:M")
+    def test_modern_names_and_custom_format_are_supported(self):
+        columns = zpool_stats.parse_columns("used:T:2:USED,read:M")
         self.assertEqual(columns[0].key, "used")
         self.assertEqual(columns[0].unit, "T")
         self.assertEqual(columns[0].precision, 2)
         self.assertEqual(columns[0].header, "USED")
         self.assertEqual(columns[1].key, "read")
+
+    def test_legacy_column_names_are_rejected(self):
+        legacy_names = (
+            "PoolName",
+            "StateHealth",
+            "LogicCapUsed",
+            "LogicCapFree",
+            "VirtCapUsed",
+            "VirtCapFree",
+            "VirtCapTot",
+            "VirtCapUsedPerc",
+            "OpsRead",
+            "OpsWrite",
+            "BwRead",
+            "BwWrite",
+            "TotalWaitRead",
+            "TotalWaitWrite",
+            "TotalWaitBoth",
+            "StateFragPerc",
+            "VirtCompPerc",
+            "VirtCompRatio",
+            "VirtCapUsedByChilds",
+            "VirtCapUsedByChildren",
+            "VirtCapUsedBySnaps",
+        )
+        for name in legacy_names:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                zpool_stats.parse_columns(name)
 
     def test_unknown_column_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -130,6 +159,132 @@ class CliTests(unittest.TestCase):
         args = zpool_stats.parse_args(["--pool", "tank", "--count", "1"])
         self.assertEqual(args.pool, "tank")
         self.assertEqual(args.count, 1)
+
+    def test_header_interval_uses_current_terminal_height(self):
+        output = io.StringIO()
+        output.isatty = lambda: True
+
+        self.assertEqual(
+            zpool_stats.header_interval(
+                None,
+                output=output,
+                terminal_size=lambda: os.terminal_size((120, 40)),
+            ),
+            39,
+        )
+
+    def test_header_interval_tracks_terminal_resize(self):
+        output = io.StringIO()
+        output.isatty = lambda: True
+        rows = 24
+
+        def terminal_size():
+            return os.terminal_size((80, rows))
+
+        self.assertEqual(
+            zpool_stats.header_interval(
+                None, output=output, terminal_size=terminal_size
+            ),
+            23,
+        )
+        rows = 10
+        self.assertEqual(
+            zpool_stats.header_interval(
+                None, output=output, terminal_size=terminal_size
+            ),
+            9,
+        )
+
+    def test_adaptive_header_repetition_is_disabled_when_redirected(self):
+        self.assertEqual(
+            zpool_stats.header_interval(None, output=io.StringIO()),
+            0,
+        )
+
+    def test_explicit_header_interval_overrides_terminal_height(self):
+        self.assertEqual(
+            zpool_stats.header_interval(7, output=io.StringIO()),
+            7,
+        )
+
+    def test_header_interval_defaults_to_adaptive_mode(self):
+        args = zpool_stats.parse_args(["tank", "--count", "1"])
+        self.assertIsNone(args.header_every)
+
+    def test_monitor_rechecks_adaptive_header_interval_each_row(self):
+        args = zpool_stats.parse_args(["tank", "--count", "4", "--no-status"])
+        sample = {
+            "used": 800,
+            "free": 200,
+            "total": 1000,
+            "capacity": 0.8,
+            "read": 300,
+            "write": 400,
+            "fragmentation": 0.48,
+            "compression": 0.03,
+            "snapshots": 60,
+        }
+        interval_calls = 0
+
+        def current_interval(configured):
+            nonlocal interval_calls
+            interval_calls += 1
+            return 2
+
+        original_collect = zpool_stats.collect_sample
+        original_interval = zpool_stats.header_interval
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda pool, interval: sample
+            zpool_stats.header_interval = current_interval
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.header_interval = original_interval
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(interval_calls, 4)
+        self.assertEqual(output.getvalue().count("used"), 2)
+
+    def test_monitor_does_not_repeat_adaptive_header_when_redirected(self):
+        args = zpool_stats.parse_args(["tank", "--count", "4", "--no-status"])
+        output = self._run_monitor(args)
+        self.assertEqual(output.count("used"), 1)
+
+    def test_monitor_honors_explicit_header_interval(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "4", "--no-status", "--header-every", "2"]
+        )
+        output = self._run_monitor(args)
+        self.assertEqual(output.count("used"), 2)
+
+    def _run_monitor(self, args):
+        sample = {
+            "used": 800,
+            "free": 200,
+            "total": 1000,
+            "capacity": 0.8,
+            "read": 300,
+            "write": 400,
+            "fragmentation": 0.48,
+            "compression": 0.03,
+            "snapshots": 60,
+        }
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda pool, interval: sample
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+            return output.getvalue()
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
 
     def test_monitor_collects_exact_requested_count(self):
         args = zpool_stats.parse_args(["tank", "--count", "2", "--no-status"])
