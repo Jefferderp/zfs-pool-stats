@@ -1,5 +1,7 @@
 import io
 import os
+import subprocess
+import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -115,7 +117,108 @@ class ColumnTests(unittest.TestCase):
             zpool_stats.parse_columns("used,definitely-not-a-column")
 
 
+class TableFormatterTests(unittest.TestCase):
+    def test_widths_only_expand_and_expansion_is_reported(self):
+        formatter = zpool_stats.TableFormatter(zpool_stats.parse_columns("pool,read"))
+
+        _, _first, first_expanded = formatter.format({"pool": "a", "read": 1})
+        _, wide, wide_expanded = formatter.format(
+            {"pool": "extra-long-pool", "read": 1}
+        )
+        _, narrow_again, narrow_expanded = formatter.format({"pool": "b", "read": 1})
+
+        self.assertFalse(first_expanded)
+        self.assertTrue(wide_expanded)
+        self.assertFalse(narrow_expanded)
+        self.assertEqual(wide.index("1B"), narrow_again.index("1B"))
+
+
 class CollectorTests(unittest.TestCase):
+    def test_snapshot_usage_is_cached_until_refresh_interval_expires(self):
+        calls = 0
+        now = 100.0
+
+        def run(command):
+            nonlocal calls
+            calls += 1
+            return f"tank\t{calls * 10}\n"
+
+        cache = zpool_stats.SnapshotCache()
+        columns = zpool_stats.parse_columns("snapshots")
+        kwargs = {
+            "columns": columns,
+            "snapshot_cache": cache,
+            "snapshot_refresh": 60.0,
+            "clock": lambda: now,
+            "sleeper": lambda interval: None,
+        }
+
+        first = zpool_stats.collect_sample("tank", 1.0, run, **kwargs)
+        now = 159.9
+        cached = zpool_stats.collect_sample("tank", 1.0, run, **kwargs)
+        now = 160.0
+        refreshed = zpool_stats.collect_sample("tank", 1.0, run, **kwargs)
+
+        self.assertEqual(first["snapshots"], 10)
+        self.assertEqual(cached["snapshots"], 10)
+        self.assertEqual(refreshed["snapshots"], 20)
+        self.assertEqual(calls, 2)
+
+    def test_collection_only_runs_collectors_needed_by_selected_columns(self):
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            return "tank\t100\t900\t1\t2\t300\t400\t5\t6\n"
+
+        sample = zpool_stats.collect_sample(
+            "tank",
+            1.0,
+            run,
+            columns=zpool_stats.parse_columns("read,write"),
+        )
+
+        self.assertEqual(sample, {"pool": "tank", "read": 300, "write": 400})
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][:2], ["zpool", "iostat"])
+
+    def test_collection_sleeps_instead_of_running_iostat_when_not_needed(self):
+        sleeps = []
+        commands = []
+
+        sample = zpool_stats.collect_sample(
+            "tank",
+            2.5,
+            lambda command: commands.append(command) or "tank\t48%\n",
+            columns=zpool_stats.parse_columns("fragmentation"),
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(sample["fragmentation"], 0.48)
+        self.assertEqual(sleeps, [2.5])
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(
+            commands[0],
+            ["zpool", "list", "-H", "-o", "name,frag", "tank"],
+        )
+
+    def test_health_only_requests_health_from_zpool_list(self):
+        commands = []
+
+        sample = zpool_stats.collect_sample(
+            "tank",
+            1.0,
+            lambda command: commands.append(command) or "tank\tONLINE\n",
+            columns=zpool_stats.parse_columns("health"),
+            sleeper=lambda interval: None,
+        )
+
+        self.assertEqual(sample["health"], "ONLINE")
+        self.assertEqual(
+            commands,
+            [["zpool", "list", "-H", "-o", "name,health", "tank"]],
+        )
+
     def test_collection_combines_command_outputs(self):
         outputs = {
             "zpool iostat": "tank\t100\t900\t1\t2\t300\t400\t5\t6\n",
@@ -140,6 +243,45 @@ class CollectorTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_closed_downstream_pipe_exits_zero_without_stderr(self):
+        code = """
+import zpool_stats
+
+zpool_stats._require_tools = lambda: None
+zpool_stats.collect_sample = lambda *args, **kwargs: {"pool": "tank"}
+raise SystemExit(
+    zpool_stats.main(
+        ["tank", "--count", "100000", "--no-status", "--columns", "pool"]
+    )
+)
+"""
+        producer = subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert producer.stdout is not None
+        assert producer.stderr is not None
+        producer.stdout.readline()
+        producer.stdout.close()
+        stderr = producer.stderr.read()
+        producer.stderr.close()
+        returncode = producer.wait(timeout=10)
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(stderr, "")
+
+    def test_snapshot_refresh_defaults_to_sixty_seconds(self):
+        args = zpool_stats.parse_args(["tank", "--count", "1"])
+        self.assertEqual(args.snapshot_refresh, 60.0)
+
+    def test_snapshot_refresh_accepts_zero_to_disable_caching(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--snapshot-refresh", "0"]
+        )
+        self.assertEqual(args.snapshot_refresh, 0.0)
+
     def test_interval_must_be_positive(self):
         stderr = io.StringIO()
         with redirect_stderr(stderr), self.assertRaises(SystemExit):
@@ -235,7 +377,7 @@ class CliTests(unittest.TestCase):
         original_interval = zpool_stats.header_interval
         original_require = zpool_stats._require_tools
         try:
-            zpool_stats.collect_sample = lambda pool, interval: sample
+            zpool_stats.collect_sample = lambda pool, interval, **kwargs: sample
             zpool_stats.header_interval = current_interval
             zpool_stats._require_tools = lambda: None
             output = io.StringIO()
@@ -261,6 +403,33 @@ class CliTests(unittest.TestCase):
         output = self._run_monitor(args)
         self.assertEqual(output.count("used"), 2)
 
+    def test_monitor_reprints_header_when_a_column_width_expands(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "2", "--no-status", "--columns", "pool,read"]
+        )
+        samples = iter(
+            [
+                {"pool": "a", "read": 1},
+                {"pool": "extra-long-pool", "read": 1},
+            ]
+        )
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: next(samples)
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+
+        header_lines = [
+            line for line in output.getvalue().splitlines() if line.startswith("pool ")
+        ]
+        self.assertEqual(len(header_lines), 2)
+
     def _run_monitor(self, args):
         sample = {
             "used": 800,
@@ -276,7 +445,7 @@ class CliTests(unittest.TestCase):
         original_collect = zpool_stats.collect_sample
         original_require = zpool_stats._require_tools
         try:
-            zpool_stats.collect_sample = lambda pool, interval: sample
+            zpool_stats.collect_sample = lambda pool, interval, **kwargs: sample
             zpool_stats._require_tools = lambda: None
             output = io.StringIO()
             with redirect_stdout(output):
@@ -285,6 +454,30 @@ class CliTests(unittest.TestCase):
         finally:
             zpool_stats.collect_sample = original_collect
             zpool_stats._require_tools = original_require
+
+    def test_monitor_passes_selected_columns_to_collector(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--no-status", "--columns", "read,write"]
+        )
+        received_columns = None
+
+        def collect(pool, interval, *, columns, **kwargs):
+            nonlocal received_columns
+            received_columns = columns
+            return {"read": 300, "write": 400}
+
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats._require_tools = lambda: None
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual([column.key for column in received_columns], ["read", "write"])
 
     def test_monitor_collects_exact_requested_count(self):
         args = zpool_stats.parse_args(["tank", "--count", "2", "--no-status"])
@@ -301,7 +494,7 @@ class CliTests(unittest.TestCase):
         }
         calls = 0
 
-        def collect(pool, interval):
+        def collect(pool, interval, **kwargs):
             nonlocal calls
             calls += 1
             return sample

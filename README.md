@@ -39,6 +39,7 @@ zpool-stats tank
 
 ```text
 zpool-stats POOL [--interval SECONDS] [--count N] [--columns SPEC]
+                 [--snapshot-refresh SECONDS]
 ```
 
 Examples:
@@ -52,6 +53,9 @@ zpool-stats tank --count 5
 
 # Select and customize columns
 zpool-stats tank --columns used:T:2:USED,free:T:2:FREE,read:M:1,write:M:1
+
+# Refresh the recursive snapshot total every five minutes
+zpool-stats tank --snapshot-refresh 300
 
 # Machine-friendly finite output without the status line
 zpool-stats tank --count 1 --no-status --header-every 0
@@ -78,18 +82,23 @@ Column names use the modern names shown by `--list-columns`. The old
 
 - Collection is local. Use the command on the ZFS host, or invoke it through
   SSH: `ssh host zpool-stats tank`.
-- `zpool iostat` provides each sampling delay. The program does not add another
-  sleep, so `--interval 1` remains approximately one second.
+- Only the commands and ZFS properties needed by the selected columns are
+  queried. `zpool iostat` provides the sampling delay when I/O columns are
+  selected; otherwise the program waits directly between samples.
 - Snapshot usage is the sum of `usedbysnapshots` for the pool and all descendant
-  filesystems/volumes. On pools with very large dataset trees, this query can
-  add overhead.
+  filesystems/volumes. The recursive query is cached for 60 seconds by default
+  to limit overhead on large dataset trees. Use `--snapshot-refresh SECONDS` to
+  change the cache lifetime, or `--snapshot-refresh 0` to query every sample.
+- Column widths grow when a longer value appears and never shrink during a run.
+  The header is reprinted whenever widths expand so its alignment remains clear.
 - Output is plain text and works when redirected. In an interactive terminal,
   the header repeats before the previous header scrolls out of the current
   terminal height and adapts when the terminal is resized. Automatic repetition
   is disabled when output is redirected. Use `--header-every N` to set a fixed
   interval or `--header-every 0` to disable repetition.
-- `Ctrl-C` exits with status 130. Command and parsing failures print a concise
-  message and exit with status 1 or 2.
+- A closed downstream pipe exits silently with status 0. `Ctrl-C` exits with
+  status 130. Command and parsing failures print a concise message and exit with
+  status 1 or 2.
 
 ## Development
 

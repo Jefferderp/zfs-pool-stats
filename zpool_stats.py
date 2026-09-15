@@ -10,9 +10,10 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -36,6 +37,45 @@ class Column:
     kind: str
     unit: str | None = None
     precision: int = 1
+
+
+@dataclasses.dataclass
+class SnapshotCache:
+    """Cache recursive snapshot totals independently for each pool."""
+
+    values: dict[str, tuple[float, int]] = dataclasses.field(default_factory=dict)
+
+    def get(
+        self,
+        pool: str,
+        refresh_interval: float,
+        runner: Callable[[Sequence[str]], str],
+        clock: Callable[[], float] = time.monotonic,
+    ) -> int:
+        now = clock()
+        cached = self.values.get(pool)
+        if (
+            cached is None
+            or refresh_interval == 0
+            or now < cached[0]
+            or now - cached[0] >= refresh_interval
+        ):
+            value = parse_snapshot_usage(
+                runner(
+                    [
+                        "zfs",
+                        "get",
+                        "-Hpr",
+                        "-o",
+                        "name,value",
+                        "usedbysnapshots",
+                        pool,
+                    ]
+                )
+            )
+            self.values[pool] = (now, value)
+            return value
+        return cached[1]
 
 
 COLUMN_SPECS = {
@@ -197,14 +237,16 @@ def parse_iostat(output: str, pool: str) -> dict[str, int | float]:
     return result
 
 
-def parse_properties(output: str) -> dict[str, int | float]:
+def parse_properties(
+    output: str, required: set[str] | None = None
+) -> dict[str, int | float]:
     result: dict[str, int | float] = {}
     for line in output.splitlines():
         fields = line.split("\t")
         if len(fields) == 3:
             _, prop, value = fields
             result[prop] = _number(value)
-    required = {"used", "available", "compressratio", "usedbychildren"}
+    required = required or {"used", "available", "compressratio", "usedbychildren"}
     missing = sorted(required - result.keys())
     if missing:
         raise ZfsCommandError(f"zfs get omitted properties: {', '.join(missing)}")
@@ -225,11 +267,21 @@ def parse_snapshot_usage(output: str) -> int:
     return total
 
 
-def parse_pool_list(output: str) -> tuple[str, float]:
+def parse_pool_properties(
+    output: str, properties: Sequence[str]
+) -> dict[str, str | float]:
     fields = output.split()
-    if len(fields) < 3:
+    if len(fields) < len(properties) + 1:
         raise ZfsCommandError("zpool list returned incomplete output")
-    return fields[1], float(_number(fields[2])) / 100
+    result: dict[str, str | float] = {}
+    for prop, value in zip(properties, fields[1:]):
+        result[prop] = float(_number(value)) / 100 if prop == "frag" else value
+    return result
+
+
+def parse_pool_list(output: str) -> tuple[str, float]:
+    values = parse_pool_properties(output, ("health", "frag"))
+    return str(values["health"]), float(values["frag"])
 
 
 def parse_status(output: str) -> tuple[str, str]:
@@ -259,49 +311,119 @@ def collect_sample(
     pool: str,
     interval: float,
     runner: Callable[[Sequence[str]], str] = run_command,
+    *,
+    columns: Sequence[Column] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    snapshot_cache: SnapshotCache | None = None,
+    snapshot_refresh: float = 0,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, int | float | str]:
-    iostat = parse_iostat(
-        runner(["zpool", "iostat", "-Hplvy", pool, str(interval), "1"]), pool
+    requested = (
+        set(COLUMN_SPECS) if columns is None else {column.key for column in columns}
     )
-    props = parse_properties(
-        runner(
-            [
-                "zfs",
-                "get",
-                "-Hp",
-                "-d",
-                "0",
-                "-o",
-                "name,property,value",
-                "used,available,compressratio,usedbychildren",
-                pool,
-            ]
+    sample: dict[str, int | float | str] = {"pool": pool}
+
+    iostat_keys = {
+        "logical_used",
+        "logical_free",
+        "read_ops",
+        "write_ops",
+        "read",
+        "write",
+        "read_wait",
+        "write_wait",
+        "total_wait",
+    }
+    if requested & iostat_keys:
+        iostat = parse_iostat(
+            runner(["zpool", "iostat", "-Hplvy", pool, str(interval), "1"]), pool
+        )
+        aliases = {"read": "read_bandwidth", "write": "write_bandwidth"}
+        for key in requested & iostat_keys:
+            source = aliases.get(key, key)
+            if source in iostat:
+                sample[key] = iostat[source]
+    else:
+        sleeper(interval)
+
+    property_dependencies = {
+        "used": {"used"},
+        "free": {"available"},
+        "total": {"used", "available"},
+        "capacity": {"used", "available"},
+        "compression": {"compressratio"},
+        "compression_ratio": {"compressratio"},
+        "children": {"usedbychildren"},
+    }
+    needed_properties = set().union(
+        *(
+            property_dependencies[key]
+            for key in requested & property_dependencies.keys()
         )
     )
-    snapshots = parse_snapshot_usage(
-        runner(["zfs", "get", "-Hpr", "-o", "name,value", "usedbysnapshots", pool])
-    )
-    health, fragmentation = parse_pool_list(
-        runner(["zpool", "list", "-H", "-o", "name,health,frag", pool])
-    )
-    used = props["used"]
-    free = props["available"]
-    total = used + free
-    return {
-        **iostat,
-        "health": health,
-        "used": used,
-        "free": free,
-        "total": total,
-        "capacity": used / total if total else 0,
-        "compression_ratio": props["compressratio"],
-        "compression": props["compressratio"] - 1,
-        "children": props["usedbychildren"],
-        "snapshots": snapshots,
-        "fragmentation": fragmentation,
-        "read": iostat["read_bandwidth"],
-        "write": iostat["write_bandwidth"],
-    }
+    if needed_properties:
+        props = parse_properties(
+            runner(
+                [
+                    "zfs",
+                    "get",
+                    "-Hp",
+                    "-d",
+                    "0",
+                    "-o",
+                    "name,property,value",
+                    ",".join(sorted(needed_properties)),
+                    pool,
+                ]
+            ),
+            needed_properties,
+        )
+        if "used" in requested:
+            sample["used"] = props["used"]
+        if "free" in requested:
+            sample["free"] = props["available"]
+        if requested & {"total", "capacity"}:
+            total = props["used"] + props["available"]
+            if "total" in requested:
+                sample["total"] = total
+            if "capacity" in requested:
+                sample["capacity"] = props["used"] / total if total else 0
+        if "compression_ratio" in requested:
+            sample["compression_ratio"] = props["compressratio"]
+        if "compression" in requested:
+            sample["compression"] = props["compressratio"] - 1
+        if "children" in requested:
+            sample["children"] = props["usedbychildren"]
+
+    if "snapshots" in requested:
+        cache = snapshot_cache or SnapshotCache()
+        sample["snapshots"] = cache.get(pool, snapshot_refresh, runner, clock)
+
+    if requested & {"health", "fragmentation"}:
+        pool_properties = [
+            prop
+            for key, prop in (("health", "health"), ("fragmentation", "frag"))
+            if key in requested
+        ]
+        pool_values = parse_pool_properties(
+            runner(
+                [
+                    "zpool",
+                    "list",
+                    "-H",
+                    "-o",
+                    ",".join(("name", *pool_properties)),
+                    pool,
+                ]
+            ),
+            pool_properties,
+        )
+        if "health" in requested:
+            sample["health"] = pool_values["health"]
+        if "fragmentation" in requested:
+            sample["fragmentation"] = pool_values["frag"]
+
+    return sample
 
 
 def format_column(column: Column, value: float | str) -> str:
@@ -318,20 +440,34 @@ def format_column(column: Column, value: float | str) -> str:
     return str(value)
 
 
+class TableFormatter:
+    """Render aligned rows while preserving maximum observed column widths."""
+
+    def __init__(self, columns: Sequence[Column]) -> None:
+        self.columns = tuple(columns)
+        self.widths = [len(column.header) + 2 for column in self.columns]
+
+    def format(self, sample: dict[str, int | float | str]) -> tuple[str, str, bool]:
+        rendered = [format_column_value(column, sample) for column in self.columns]
+        new_widths = [
+            max(width, len(value) + 2) for width, value in zip(self.widths, rendered)
+        ]
+        expanded = new_widths != self.widths
+        self.widths = new_widths
+        header = "".join(
+            f"{column.header:<{width}}"
+            for column, width in zip(self.columns, self.widths)
+        ).rstrip()
+        row = "".join(
+            f"{value:<{width}}" for value, width in zip(rendered, self.widths)
+        ).rstrip()
+        return header, row, expanded
+
+
 def format_row(
     columns: Sequence[Column], sample: dict[str, int | float | str]
 ) -> tuple[str, str]:
-    rendered = [format_column_value(column, sample) for column in columns]
-    widths = [
-        max(len(column.header), len(value)) + 2
-        for column, value in zip(columns, rendered)
-    ]
-    header = "".join(
-        f"{column.header:<{width}}" for column, width in zip(columns, widths)
-    ).rstrip()
-    row = "".join(
-        f"{value:<{width}}" for value, width in zip(rendered, widths)
-    ).rstrip()
+    header, row, _ = TableFormatter(columns).format(sample)
     return header, row
 
 
@@ -358,6 +494,13 @@ def nonnegative_int(value: str) -> int:
     number = int(value)
     if number < 0:
         raise argparse.ArgumentTypeError("must be zero or greater")
+    return number
+
+
+def nonnegative_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise argparse.ArgumentTypeError("must be finite and zero or greater")
     return number
 
 
@@ -395,6 +538,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-status", action="store_true", help="do not print the pool status line"
+    )
+    parser.add_argument(
+        "--snapshot-refresh",
+        type=nonnegative_float,
+        default=60.0,
+        metavar="SECONDS",
+        help="seconds to cache recursive snapshot usage; 0 disables caching (default: 60)",
     )
     parser.add_argument(
         "--header-every",
@@ -437,13 +587,25 @@ def monitor(args: argparse.Namespace) -> int:
         print(status_line(args.pool), flush=True)
     printed = 0
     rows_since_header = 0
+    snapshot_cache = SnapshotCache()
+    formatter = TableFormatter(args.parsed_columns)
     while args.count == 0 or printed < args.count:
-        # `zpool iostat interval 1` blocks for the requested sampling window,
-        # so adding a Python sleep here would double the configured interval.
-        sample = collect_sample(args.pool, args.interval)
-        header, row = format_row(args.parsed_columns, sample)
+        # The collector uses zpool iostat as the sampling clock when an I/O
+        # column needs it, and sleeps directly when no I/O column is selected.
+        sample = collect_sample(
+            args.pool,
+            args.interval,
+            columns=args.parsed_columns,
+            snapshot_cache=snapshot_cache,
+            snapshot_refresh=args.snapshot_refresh,
+        )
+        header, row, widths_expanded = formatter.format(sample)
         repeat_every = header_interval(args.header_every)
-        if printed == 0 or (repeat_every and rows_since_header >= repeat_every):
+        if (
+            printed == 0
+            or widths_expanded
+            or (repeat_every and rows_since_header >= repeat_every)
+        ):
             print(header)
             rows_since_header = 0
         print(row, flush=True)
@@ -452,14 +614,26 @@ def monitor(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv)
-    if args.list_columns:
-        for name, (header, kind) in COLUMN_SPECS.items():
-            print(f"{name:<20} {kind:<8} default header: {header}")
-        return 0
+def _discard_stdout() -> None:
+    """Redirect stdout so interpreter shutdown cannot flush a broken pipe."""
     try:
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), sys.stdout.fileno())
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    try:
+        args = parse_args(argv)
+        if args.list_columns:
+            for name, (header, kind) in COLUMN_SPECS.items():
+                print(f"{name:<20} {kind:<8} default header: {header}", flush=True)
+            return 0
         return monitor(args)
+    except BrokenPipeError:
+        _discard_stdout()
+        return 0
     except ZfsCommandError as exc:
         print(f"zpool-stats: error: {exc}", file=sys.stderr)
         return 1
