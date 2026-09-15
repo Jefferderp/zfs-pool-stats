@@ -117,7 +117,23 @@ def _number(value: str) -> int | float:
     try:
         return int(value)
     except ValueError:
-        return float(value)
+        try:
+            number = float(value)
+        except ValueError as exc:
+            raise ZfsCommandError(f"invalid numeric value {value!r}") from exc
+        if not math.isfinite(number):
+            raise ZfsCommandError(f"non-finite numeric value {value!r}")
+        return number
+
+
+def _integer(value: str) -> int:
+    value = value.strip()
+    if value in {"", "-"}:
+        return 0
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ZfsCommandError(f"invalid integer value {value!r}") from exc
 
 
 def format_bytes(value: float, unit: str | None = None, precision: int = 1) -> str:
@@ -224,7 +240,7 @@ def parse_iostat(output: str, pool: str) -> dict[str, int | float]:
         raise ZfsCommandError(
             f"zpool iostat returned an incomplete row for pool {pool!r}"
         )
-    values = [_number(value) for value in row[1:]]
+    values = [_integer(value) for value in row[1:]]
     result = {
         "pool": pool,
         "logical_used": values[0],
@@ -249,7 +265,9 @@ def parse_properties(
         fields = line.split("\t")
         if len(fields) == 3:
             _, prop, value = fields
-            result[prop] = _number(value)
+            result[prop] = (
+                _number(value) if prop == "compressratio" else _integer(value)
+            )
     required = required or {"used", "available", "compressratio", "usedbychildren"}
     missing = sorted(required - result.keys())
     if missing:
@@ -607,6 +625,12 @@ def _require_tools() -> None:
         raise ZfsCommandError(f"required command(s) not found: {', '.join(missing)}")
 
 
+def _validate_sample(sample: dict[str, int | float | str]) -> None:
+    for key, value in sample.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ZfsCommandError(f"non-finite value for column {key!r}")
+
+
 def monitor(args: argparse.Namespace) -> int:
     _require_tools()
     if args.format == "table" and not args.no_status:
@@ -627,6 +651,7 @@ def monitor(args: argparse.Namespace) -> int:
             snapshot_cache=snapshot_cache,
             snapshot_refresh=args.snapshot_refresh,
         )
+        _validate_sample(sample)
         if args.format == "table":
             assert formatter is not None
             header, row, widths_expanded = formatter.format(sample)

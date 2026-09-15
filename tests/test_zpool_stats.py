@@ -147,6 +147,38 @@ class TableFormatterTests(unittest.TestCase):
 
 
 class CollectorTests(unittest.TestCase):
+    def test_non_finite_source_values_are_rejected(self):
+        for value in ("nan", "inf", "-inf"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    zpool_stats.ZfsCommandError, "non-finite numeric value"
+                ),
+            ):
+                zpool_stats.parse_properties(
+                    f"tank\tcompressratio\t{value}\n", {"compressratio"}
+                )
+
+    def test_malformed_source_values_are_rejected_cleanly(self):
+        with self.assertRaisesRegex(
+            zpool_stats.ZfsCommandError, "invalid numeric value"
+        ):
+            zpool_stats.parse_properties(
+                "tank\tcompressratio\tnot-a-number\n", {"compressratio"}
+            )
+
+    def test_byte_properties_reject_floating_point_source_values(self):
+        with self.assertRaisesRegex(
+            zpool_stats.ZfsCommandError, "invalid integer value"
+        ):
+            zpool_stats.parse_properties("tank\tused\t1e308\n", {"used"})
+
+    def test_derived_non_finite_values_are_rejected_before_output(self):
+        with self.assertRaisesRegex(
+            zpool_stats.ZfsCommandError, "non-finite value for column 'total'"
+        ):
+            zpool_stats._validate_sample({"used": 1e308, "total": 1e308 + 1e308})
+
     def test_timestamp_columns_share_one_sample_time(self):
         sleeps = []
         sample = zpool_stats.collect_sample(
@@ -337,6 +369,29 @@ class CliTests(unittest.TestCase):
                 "capacity": 0.8,
                 "compression_ratio": 1.03,
             },
+        )
+
+    def test_jsonl_reports_non_finite_source_values_cleanly(self):
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: {"used": float("inf")}
+            zpool_stats._require_tools = lambda: None
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                returncode = zpool_stats.main(
+                    ["tank", "--count", "1", "--format", "jsonl", "--columns", "used"]
+                )
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(returncode, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(
+            stderr.getvalue(),
+            "zpool-stats: error: non-finite value for column 'used'\n",
         )
 
     def test_closed_downstream_pipe_exits_zero_without_stderr(self):
