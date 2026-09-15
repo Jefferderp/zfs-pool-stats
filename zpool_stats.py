@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import math
 import os
 import shutil
@@ -12,8 +13,9 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
+from datetime import datetime
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -79,6 +81,8 @@ class SnapshotCache:
 
 
 COLUMN_SPECS = {
+    "timestamp": ("timestamp", "label"),
+    "unix_time": ("unix", "number"),
     "pool": ("pool", "label"),
     "health": ("health", "label"),
     "logical_used": ("alloc", "bytes"),
@@ -317,6 +321,7 @@ def collect_sample(
     snapshot_cache: SnapshotCache | None = None,
     snapshot_refresh: float = 0,
     clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
 ) -> dict[str, int | float | str]:
     requested = (
         set(COLUMN_SPECS) if columns is None else {column.key for column in columns}
@@ -391,7 +396,7 @@ def collect_sample(
         if "compression_ratio" in requested:
             sample["compression_ratio"] = props["compressratio"]
         if "compression" in requested:
-            sample["compression"] = props["compressratio"] - 1
+            sample["compression"] = round(float(props["compressratio"]) - 1, 12)
         if "children" in requested:
             sample["children"] = props["usedbychildren"]
 
@@ -422,6 +427,17 @@ def collect_sample(
             sample["health"] = pool_values["health"]
         if "fragmentation" in requested:
             sample["fragmentation"] = pool_values["frag"]
+
+    if requested & {"timestamp", "unix_time"}:
+        sample_time = wall_clock()
+        if "timestamp" in requested:
+            sample["timestamp"] = (
+                datetime.fromtimestamp(sample_time)
+                .astimezone()
+                .isoformat(timespec="seconds")
+            )
+        if "unix_time" in requested:
+            sample["unix_time"] = sample_time
 
     return sample
 
@@ -532,6 +548,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated columns, each optionally NAME:UNIT:PRECISION:HEADER",
     )
     parser.add_argument(
+        "--format",
+        choices=("table", "tsv", "jsonl"),
+        default="table",
+        help="output format; TSV and JSON Lines use raw values (default: table)",
+    )
+    parser.add_argument(
         "--list-columns",
         action="store_true",
         help="list available column names and exit",
@@ -572,6 +594,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.parsed_columns = parse_columns(args.columns)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.format == "jsonl":
+        keys = [column.key for column in args.parsed_columns]
+        if len(keys) != len(set(keys)):
+            parser.error("JSON Lines output requires unique column names")
     return args
 
 
@@ -583,12 +609,14 @@ def _require_tools() -> None:
 
 def monitor(args: argparse.Namespace) -> int:
     _require_tools()
-    if not args.no_status:
+    if args.format == "table" and not args.no_status:
         print(status_line(args.pool), flush=True)
     printed = 0
     rows_since_header = 0
     snapshot_cache = SnapshotCache()
-    formatter = TableFormatter(args.parsed_columns)
+    formatter = TableFormatter(args.parsed_columns) if args.format == "table" else None
+    if args.format == "tsv":
+        print("\t".join(column.key for column in args.parsed_columns), flush=True)
     while args.count == 0 or printed < args.count:
         # The collector uses zpool iostat as the sampling clock when an I/O
         # column needs it, and sleeps directly when no I/O column is selected.
@@ -599,18 +627,35 @@ def monitor(args: argparse.Namespace) -> int:
             snapshot_cache=snapshot_cache,
             snapshot_refresh=args.snapshot_refresh,
         )
-        header, row, widths_expanded = formatter.format(sample)
-        repeat_every = header_interval(args.header_every)
-        if (
-            printed == 0
-            or widths_expanded
-            or (repeat_every and rows_since_header >= repeat_every)
-        ):
-            print(header)
-            rows_since_header = 0
-        print(row, flush=True)
+        if args.format == "table":
+            assert formatter is not None
+            header, row, widths_expanded = formatter.format(sample)
+            repeat_every = header_interval(args.header_every)
+            if (
+                printed == 0
+                or widths_expanded
+                or (repeat_every and rows_since_header >= repeat_every)
+            ):
+                print(header)
+                rows_since_header = 0
+            print(row, flush=True)
+            rows_since_header += 1
+        elif args.format == "tsv":
+            print(
+                "\t".join(
+                    "" if sample.get(column.key) is None else str(sample[column.key])
+                    for column in args.parsed_columns
+                ),
+                flush=True,
+            )
+        else:
+            record = {
+                column.key: sample.get(column.key) for column in args.parsed_columns
+            }
+            print(
+                json.dumps(record, separators=(",", ":"), allow_nan=False), flush=True
+            )
         printed += 1
-        rows_since_header += 1
     return 0
 
 

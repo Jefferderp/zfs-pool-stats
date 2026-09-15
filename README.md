@@ -6,8 +6,8 @@ compression, health, and scrub status into one readable stream.
 
 ```text
 zpool tank is ONLINE: scan: scrub repaired 0B in 00:10:05 with 0 errors on Sun Sep 13 00:34:06 2026
-used    free  total   cap    read  write  frag   comp  snap
-407.1G  1.4T  1.8T  21.9%  0B    1.1M   9.0%  28.0%  16.5G
+used    free  total  cap  read  write  frag  comp  snap
+407.1G  1.4T  1.8T   22%  0B    1.1M    9%   28%   16.5G
 ```
 
 ## Requirements
@@ -39,7 +39,7 @@ zpool-stats tank
 
 ```text
 zpool-stats POOL [--interval SECONDS] [--count N] [--columns SPEC]
-                 [--snapshot-refresh SECONDS]
+                 [--format table|tsv|jsonl] [--snapshot-refresh SECONDS]
 ```
 
 Examples:
@@ -54,11 +54,16 @@ zpool-stats tank --count 5
 # Select and customize columns
 zpool-stats tank --columns used:T:2:USED,free:T:2:FREE,read:M:1,write:M:1
 
+# Add a local ISO 8601 timestamp, or Unix time with millisecond precision
+zpool-stats tank --columns timestamp,used,free,read,write
+zpool-stats tank --columns unix_time::3,used,free,read,write
+
 # Refresh the recursive snapshot total every five minutes
 zpool-stats tank --snapshot-refresh 300
 
-# Machine-friendly finite output without the status line
-zpool-stats tank --count 1 --no-status --header-every 0
+# Emit raw records for scripts, metrics collectors, or log ingestion
+zpool-stats tank --count 5 --format tsv --columns timestamp,used,free,read,write
+zpool-stats tank --format jsonl --columns unix_time,used,free,read,write
 
 # Discover every supported column
 zpool-stats --list-columns
@@ -74,6 +79,24 @@ The default columns are:
 ```text
 used,free,total,capacity,read,write,fragmentation,compression,snapshots
 ```
+
+`timestamp` is local ISO 8601 time with a numeric UTC offset, such as
+`2026-09-14T13:45:02-04:00`. `unix_time` is seconds since the Unix epoch;
+increase its table precision with a specification such as `unix_time::3`.
+
+### Machine-readable output
+
+`--format tsv` writes one header followed by tab-separated records.
+`--format jsonl` writes one JSON object per record with no header. Both formats
+automatically omit the human-readable pool status line and use modern column
+names as field names. JSON Lines therefore requires each selected column name
+to be unique.
+
+TSV and JSON Lines return unformatted source values so consumers do not need to
+strip display units: bytes and nanoseconds are numbers, percentage-like fields
+are ratios (`0.48` means 48%), and unavailable values are an empty TSV field or
+JSON `null`. Column units, precision, and custom headers affect table output
+only.
 
 Column names use the modern names shown by `--list-columns`. The old
 `--pool/-p` option and `--interval/-t` spelling remain compatible.
@@ -99,6 +122,11 @@ Column names use the modern names shown by `--list-columns`. The old
 - A closed downstream pipe exits silently with status 0. `Ctrl-C` exits with
   status 130. Command and parsing failures print a concise message and exit with
   status 1 or 2.
+- `compression_ratio` is OpenZFS's `compressratio` value (`1.03x`, for example).
+  The shorter `compression` column reports the amount above parity as a
+  percentage: `(compressratio - 1) × 100`, so `1.03x` displays as `3%`. It is
+  not the percentage of physical space saved; that would be
+  `(1 - 1 / compressratio) × 100`.
 
 ## Development
 

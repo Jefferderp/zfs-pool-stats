@@ -1,9 +1,11 @@
 import io
+import json
 import os
 import subprocess
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime
 
 import zpool_stats
 
@@ -118,6 +120,11 @@ class ColumnTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 zpool_stats.parse_columns(name)
 
+    def test_timestamp_columns_are_supported(self):
+        columns = zpool_stats.parse_columns("timestamp,unix_time")
+        self.assertEqual([column.key for column in columns], ["timestamp", "unix_time"])
+        self.assertEqual([column.header for column in columns], ["timestamp", "unix"])
+
     def test_unknown_column_is_rejected(self):
         with self.assertRaises(ValueError):
             zpool_stats.parse_columns("used,definitely-not-a-column")
@@ -140,6 +147,22 @@ class TableFormatterTests(unittest.TestCase):
 
 
 class CollectorTests(unittest.TestCase):
+    def test_timestamp_columns_share_one_sample_time(self):
+        sleeps = []
+        sample = zpool_stats.collect_sample(
+            "tank",
+            2.5,
+            columns=zpool_stats.parse_columns("timestamp,unix_time::3"),
+            sleeper=sleeps.append,
+            wall_clock=lambda: 1_725_000_000.125,
+        )
+
+        self.assertEqual(sample["unix_time"], 1_725_000_000.125)
+        self.assertEqual(
+            datetime.fromisoformat(sample["timestamp"]).timestamp(), 1_725_000_000
+        )
+        self.assertEqual(sleeps, [2.5])
+
     def test_snapshot_usage_is_cached_until_refresh_interval_expires(self):
         calls = 0
         now = 100.0
@@ -169,6 +192,17 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(cached["snapshots"], 10)
         self.assertEqual(refreshed["snapshots"], 20)
         self.assertEqual(calls, 2)
+
+    def test_compression_avoids_binary_float_noise(self):
+        sample = zpool_stats.collect_sample(
+            "tank",
+            1.0,
+            lambda command: "tank\tcompressratio\t1.29x\n",
+            columns=zpool_stats.parse_columns("compression"),
+            sleeper=lambda interval: None,
+        )
+
+        self.assertEqual(sample["compression"], 0.29)
 
     def test_collection_only_runs_collectors_needed_by_selected_columns(self):
         commands = []
@@ -249,6 +283,62 @@ class CollectorTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_format_accepts_table_tsv_and_jsonl(self):
+        for output_format in ("table", "tsv", "jsonl"):
+            with self.subTest(output_format=output_format):
+                args = zpool_stats.parse_args(
+                    ["tank", "--count", "1", "--format", output_format]
+                )
+                self.assertEqual(args.format, output_format)
+
+    def test_jsonl_rejects_duplicate_column_names(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            zpool_stats.parse_args(
+                ["tank", "--format", "jsonl", "--columns", "used,used"]
+            )
+
+    def test_tsv_outputs_raw_values_with_one_machine_header(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "tsv",
+                "--columns",
+                "used,capacity,compression_ratio",
+            ]
+        )
+
+        self.assertEqual(
+            self._run_monitor(args),
+            "used\tcapacity\tcompression_ratio\n800\t0.8\t1.03\n",
+        )
+
+    def test_jsonl_outputs_typed_raw_values_without_status(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "jsonl",
+                "--columns",
+                "pool,used,capacity,compression_ratio",
+            ]
+        )
+
+        record = json.loads(self._run_monitor(args))
+        self.assertEqual(
+            record,
+            {
+                "pool": "tank",
+                "used": 800,
+                "capacity": 0.8,
+                "compression_ratio": 1.03,
+            },
+        )
+
     def test_closed_downstream_pipe_exits_zero_without_stderr(self):
         code = """
 import zpool_stats
@@ -438,6 +528,7 @@ raise SystemExit(
 
     def _run_monitor(self, args):
         sample = {
+            "pool": "tank",
             "used": 800,
             "free": 200,
             "total": 1000,
@@ -446,6 +537,7 @@ raise SystemExit(
             "write": 400,
             "fragmentation": 0.48,
             "compression": 0.03,
+            "compression_ratio": 1.03,
             "snapshots": 60,
         }
         original_collect = zpool_stats.collect_sample
