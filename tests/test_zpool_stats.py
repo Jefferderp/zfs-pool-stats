@@ -52,6 +52,12 @@ tank\tusedbychildren\t700"""
         with self.assertRaisesRegex(zpool_stats.ZfsCommandError, "tank/a"):
             zpool_stats.parse_snapshot_usage("tank\t10\ntank/a\tnot-a-number\n")
 
+    def test_pool_list_parser_preserves_health_fragmentation_tuple(self):
+        self.assertEqual(
+            zpool_stats.parse_pool_list("tank\tONLINE\t48%\n"),
+            ("ONLINE", 0.48),
+        )
+
     def test_status_summary_extracts_health_and_scan(self):
         output = """  pool: tank
  state: ONLINE
