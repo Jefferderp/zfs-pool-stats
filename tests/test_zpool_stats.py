@@ -943,7 +943,16 @@ raise SystemExit(
 
     def test_monitor_adds_sampling_interval_to_iostat_timeout(self):
         args = zpool_stats.parse_args(
-            ["tank", "--count", "1", "--no-status", "--command-timeout", "7"]
+            [
+                "tank",
+                "--count",
+                "1",
+                "--no-status",
+                "--command-timeout",
+                "7",
+                "--interval",
+                "1",
+            ]
         )
         observed = []
         sample = {

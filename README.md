@@ -51,7 +51,7 @@ zpool-stats --list-pools
 Examples:
 
 ```bash
-# Auto-detect and monitor every imported pool at one-second intervals
+# Auto-detect and monitor every imported pool at 10-second intervals
 zpool-stats
 
 # Explicitly monitor every imported pool

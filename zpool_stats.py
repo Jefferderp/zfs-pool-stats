@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -774,8 +774,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-t",
         "--interval",
         type=positive_float,
-        default=1.0,
-        help="seconds between samples (default: 1)",
+        default=10.0,
+        help="seconds between samples (default: 10)",
     )
     parser.add_argument(
         "-n",
