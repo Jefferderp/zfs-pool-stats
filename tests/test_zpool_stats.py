@@ -188,6 +188,60 @@ class TableFormatterTests(unittest.TestCase):
 
 
 class InteractiveRendererTests(unittest.TestCase):
+    def test_pool_sections_scroll_independently_with_fixed_blank_separator(self):
+        output = io.StringIO()
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            ["tank status", "backup status"],
+            color=False,
+            pools=["tank", "backup"],
+            terminal_size=lambda: os.terminal_size((80, 11)),
+        )
+        for number in range(6):
+            renderer.draw("pool used", f"tank {number}", pool="tank")
+            renderer.draw("pool used", f"backup {number}", pool="backup")
+        frame = output.getvalue().split("\x1b[H")[-1]
+        lines = frame.replace("\x1b[K", "").replace("\x1b[J", "").split("\r\n")
+        self.assertEqual(
+            lines,
+            [
+                "tank status",
+                "pool used",
+                "tank 3",
+                "tank 4",
+                "tank 5",
+                "",
+                "backup status",
+                "pool used",
+                "backup 3",
+                "backup 4",
+                "backup 5",
+            ],
+        )
+
+    def test_pool_sections_resize_preserves_independent_history(self):
+        output = io.StringIO()
+        height = 9
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            [],
+            color=False,
+            pools=["a", "b"],
+            terminal_size=lambda: os.terminal_size((80, height)),
+        )
+        for number in range(5):
+            for pool in ("a", "b"):
+                renderer.draw("pool used", f"{pool} {number}", pool=pool)
+        height = 3
+        renderer.draw("pool used", "a 5", pool="a")
+        self.assertEqual(renderer.last_line_count, 3)
+        height = 10
+        renderer.draw("pool used", "a 6", pool="a")
+        frame = output.getvalue().split("\x1b[H")[-1]
+        self.assertEqual(renderer.last_line_count, 10)
+        for row in ("a 3", "a 4", "a 5", "a 6", "b 2", "b 3", "b 4"):
+            self.assertIn(row, frame)
+
     def test_color_auto_follows_tty_and_never_disables_ansi(self):
         tty = io.StringIO()
         tty.isatty = lambda: True

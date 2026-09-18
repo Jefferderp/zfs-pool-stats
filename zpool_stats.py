@@ -616,10 +616,14 @@ class StickyTableRenderer:
         status_lines: Sequence[str],
         *,
         color: bool,
+        pools: Sequence[str] = (),
         terminal_size: Callable[[], os.terminal_size] = shutil.get_terminal_size,
     ) -> None:
         self.output = output
         self.status_lines = tuple(status_lines)
+        self.pools = tuple(pools)
+        self.pool_rows: dict[str, list[str]] = {pool: [] for pool in pools}
+        self.pool_headers: dict[str, str] = {}
         self.color = color
         self.terminal_size = terminal_size
         self.rows: list[str] = []
@@ -628,7 +632,10 @@ class StickyTableRenderer:
         self.started = False
         self.closed = False
 
-    def draw(self, header: str, row: str) -> None:
+    def draw(self, header: str, row: str, *, pool: str | None = None) -> None:
+        if self.pools:
+            self.draw_pool(header, row, pool=pool)
+            return
         size = self.terminal_size()
         width = max(1, size.columns)
         height = max(1, size.lines)
@@ -651,6 +658,47 @@ class StickyTableRenderer:
             else []
         )
         lines = [*visible_status, visible_header, *visible_rows]
+        self.last_line_count = len(lines)
+        prefix = "\x1b[?25l\x1b[H" if not self.started else "\x1b[H"
+        frame = "\r\n".join(f"{line}\x1b[K" for line in lines)
+        self.output.write(f"{prefix}{frame}\x1b[J")
+        self.output.flush()
+        self.started = True
+
+    def draw_pool(self, header: str, row: str, *, pool: str | None) -> None:
+        if pool not in self.pool_rows:
+            raise ValueError(f"unknown display pool: {pool}")
+        rows = self.pool_rows[pool]
+        if self.pool_headers.get(pool, header) != header:
+            rows.clear()
+        self.pool_headers[pool] = header
+        rows.append(row)
+        del rows[:-10_000]
+        size = self.terminal_size()
+        height, width = max(1, size.lines), max(1, size.columns)
+        # If sections cannot fit, show a stable subset rather than rotate pools.
+        visible = self.pools[: max(1, (height + 1) // 3)]
+        budget, remainder = divmod(height - len(visible) + 1, len(visible))
+        lines = []
+        for index, name in enumerate(visible):
+            if index:
+                lines.append("")
+            section_height = budget + (index < remainder)
+            section = []
+            if self.status_lines and section_height >= 3:
+                section.append(
+                    color_status(self.status_lines[index][:width], self.color)
+                )
+            if section_height >= 2:
+                section.append(
+                    color_header(
+                        self.pool_headers.get(name, header)[:width], self.color
+                    )
+                )
+            available = section_height - len(section)
+            section.extend(line[:width] for line in self.pool_rows[name][-available:])
+            section.extend([""] * (section_height - len(section)))
+            lines.extend(section)
         self.last_line_count = len(lines)
         prefix = "\x1b[?25l\x1b[H" if not self.started else "\x1b[H"
         frame = "\r\n".join(f"{line}\x1b[K" for line in lines)
@@ -862,7 +910,7 @@ def monitor(args: argparse.Namespace) -> int:
     )
     use_color = args.format == "table" and colors_enabled(args.color)
     sticky_renderer = (
-        StickyTableRenderer(sys.stdout, status_lines, color=use_color)
+        StickyTableRenderer(sys.stdout, status_lines, color=use_color, pools=pools)
         if use_sticky_header
         else None
     )
@@ -899,7 +947,7 @@ def monitor(args: argparse.Namespace) -> int:
                     assert formatter is not None
                     header, row, widths_expanded = formatter.format(sample)
                     if sticky_renderer is not None:
-                        sticky_renderer.draw(header, row)
+                        sticky_renderer.draw(header, row, pool=str(sample["pool"]))
                     else:
                         repeat_every = args.header_every or 0
                         if (
