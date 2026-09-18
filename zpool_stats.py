@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -638,6 +638,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-p", "--pool", dest="pool_option", help=argparse.SUPPRESS)
     parser.add_argument(
+        "-a",
+        "--all",
+        dest="all_pools",
+        action="store_true",
+        help="monitor all imported pools (default when POOL is omitted)",
+    )
+    parser.add_argument(
         "-i",
         "-t",
         "--interval",
@@ -713,6 +720,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.pool and args.pool_option and args.pool != args.pool_option:
         parser.error("POOL and --pool specify different pools")
     args.pool = args.pool or args.pool_option
+    if args.all_pools and args.pool:
+        parser.error("POOL cannot be used with --all")
     if args.list_pools and args.pool:
         parser.error("POOL cannot be used with --list-pools")
     try:

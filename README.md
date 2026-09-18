@@ -38,7 +38,7 @@ zpool-stats
 ## Usage
 
 ```text
-zpool-stats [POOL] [--interval SECONDS] [--count N] [--columns SPEC]
+zpool-stats [POOL | --all] [--interval SECONDS] [--count N] [--columns SPEC]
                    [--format table|csv|tsv|jsonl] [--snapshot-refresh SECONDS]
                    [--command-timeout SECONDS]
 zpool-stats --list-pools
@@ -49,6 +49,9 @@ Examples:
 ```bash
 # Auto-detect and monitor every imported pool at one-second intervals
 zpool-stats
+
+# Explicitly monitor every imported pool
+zpool-stats --all
 
 # Monitor only one pool
 zpool-stats tank
@@ -117,9 +120,10 @@ Column names use the modern names shown by `--list-columns`. The old
 ## Behavior and caveats
 
 - Collection is local. With no pool argument, imported pools are discovered at
-  startup using `zpool list` and each sample set emits one row per pool. Pass a
-  pool argument to monitor only that pool. `--count` counts complete sample sets,
-  not individual pool rows.
+  startup using `zpool list` and each sample set emits one row per pool. `--all`
+  requests the same behavior explicitly. Pass a pool argument to monitor only
+  that pool; a pool argument and `--all` are mutually exclusive. `--count`
+  counts complete sample sets, not individual pool rows.
 - Use the command on the ZFS host, or invoke it through SSH:
   `ssh host zpool-stats`.
 - Only the commands and ZFS properties needed by the selected columns are

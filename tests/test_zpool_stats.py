@@ -414,6 +414,49 @@ class CliTests(unittest.TestCase):
 
         self.assertIsNone(args.pool)
 
+    def test_all_flag_explicitly_selects_automatic_pool_discovery(self):
+        args = zpool_stats.parse_args(["--all", "--count", "1"])
+
+        self.assertTrue(args.all_pools)
+        self.assertIsNone(args.pool)
+
+    def test_all_flag_rejects_an_explicit_pool(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit):
+            zpool_stats.parse_args(["tank", "--all"])
+
+        self.assertIn("POOL cannot be used with --all", stderr.getvalue())
+
+    def test_explicit_pool_does_not_discover_or_collect_other_pools(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--format", "tsv", "--columns", "used"]
+        )
+        collected = []
+
+        def collect(pool, interval, **kwargs):
+            collected.append(pool)
+            return {"pool": pool, "used": 800}
+
+        original_collect = zpool_stats.collect_sample
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats.discover_pools = lambda runner: self.fail(
+                "explicit pool must not trigger discovery"
+            )
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.discover_pools = original_discover
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(collected, ["tank"])
+        self.assertEqual(output.getvalue(), "pool\tused\ntank\t800\n")
+
     def test_format_accepts_table_csv_tsv_and_jsonl(self):
         for output_format in ("table", "csv", "tsv", "jsonl"):
             with self.subTest(output_format=output_format):
