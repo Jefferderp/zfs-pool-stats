@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import dataclasses
 import json
 import math
@@ -16,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -590,9 +591,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=("table", "tsv", "jsonl"),
+        choices=("table", "csv", "tsv", "jsonl"),
         default="table",
-        help="output format; TSV and JSON Lines use raw values (default: table)",
+        help="output format; CSV, TSV, and JSON Lines use raw values (default: table)",
     )
     parser.add_argument(
         "--list-columns",
@@ -686,8 +687,14 @@ def monitor(args: argparse.Namespace) -> int:
     rows_since_header = 0
     snapshot_cache = SnapshotCache()
     formatter = TableFormatter(args.parsed_columns) if args.format == "table" else None
-    if args.format == "tsv":
-        print("\t".join(column.key for column in args.parsed_columns), flush=True)
+    delimited_writer = None
+    if args.format in {"csv", "tsv"}:
+        delimiter = "," if args.format == "csv" else "\t"
+        delimited_writer = csv.writer(
+            sys.stdout, delimiter=delimiter, lineterminator="\n"
+        )
+        delimited_writer.writerow(column.key for column in args.parsed_columns)
+        sys.stdout.flush()
     while args.count == 0 or printed < args.count:
         # The collector uses zpool iostat as the sampling clock when an I/O
         # column needs it, and sleeps directly when no I/O column is selected.
@@ -713,14 +720,13 @@ def monitor(args: argparse.Namespace) -> int:
                 rows_since_header = 0
             print(row, flush=True)
             rows_since_header += 1
-        elif args.format == "tsv":
-            print(
-                "\t".join(
-                    "" if sample.get(column.key) is None else str(sample[column.key])
-                    for column in args.parsed_columns
-                ),
-                flush=True,
+        elif args.format in {"csv", "tsv"}:
+            assert delimited_writer is not None
+            delimited_writer.writerow(
+                "" if sample.get(column.key) is None else sample[column.key]
+                for column in args.parsed_columns
             )
+            sys.stdout.flush()
         else:
             record = {
                 column.key: sample.get(column.key) for column in args.parsed_columns

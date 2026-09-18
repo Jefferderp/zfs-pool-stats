@@ -39,7 +39,7 @@ zpool-stats tank
 
 ```text
 zpool-stats POOL [--interval SECONDS] [--count N] [--columns SPEC]
-                 [--format table|tsv|jsonl] [--snapshot-refresh SECONDS]
+                 [--format table|csv|tsv|jsonl] [--snapshot-refresh SECONDS]
                  [--command-timeout SECONDS]
 zpool-stats --list-pools
 ```
@@ -64,6 +64,7 @@ zpool-stats tank --columns unix_time::3,used,free,read,write
 zpool-stats tank --snapshot-refresh 300
 
 # Emit raw records for scripts, metrics collectors, or log ingestion
+zpool-stats tank --count 5 --format csv --columns timestamp,used,free,read,write
 zpool-stats tank --count 5 --format tsv --columns timestamp,used,free,read,write
 zpool-stats tank --format jsonl --columns unix_time,used,free,read,write
 
@@ -91,17 +92,19 @@ increase its table precision with a specification such as `unix_time::3`.
 
 ### Machine-readable output
 
-`--format tsv` writes one header followed by tab-separated records.
-`--format jsonl` writes one JSON object per record with no header. Both formats
+`--format csv` and `--format tsv` write one header followed by comma- or
+tab-separated records. CSV fields follow standard CSV quoting rules, making the
+stream suitable for spreadsheets and tools such as `csvkit`. `--format jsonl`
+writes one JSON object per record with no header. All machine-readable formats
 automatically omit the human-readable pool status line and use modern column
 names as field names. JSON Lines therefore requires each selected column name
 to be unique.
 
-TSV and JSON Lines return unformatted source values so consumers do not need to
-strip display units: bytes and nanoseconds are numbers, percentage-like fields
-are ratios (`0.48` means 48%), and unavailable values are an empty TSV field or
-JSON `null`. Column units, precision, and custom headers affect table output
-only.
+CSV, TSV, and JSON Lines return unformatted source values so consumers do not
+need to strip display units: bytes and nanoseconds are numbers,
+percentage-like fields are ratios (`0.48` means 48%), and unavailable values
+are an empty CSV/TSV field or JSON `null`. Column units, precision, and custom
+headers affect table output only.
 
 Column names use the modern names shown by `--list-columns`. The old
 `--pool/-p` option and `--interval/-t` spelling remain compatible.

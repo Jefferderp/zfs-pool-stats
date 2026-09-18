@@ -334,8 +334,8 @@ class CollectorTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def test_format_accepts_table_tsv_and_jsonl(self):
-        for output_format in ("table", "tsv", "jsonl"):
+    def test_format_accepts_table_csv_tsv_and_jsonl(self):
+        for output_format in ("table", "csv", "tsv", "jsonl"):
             with self.subTest(output_format=output_format):
                 args = zpool_stats.parse_args(
                     ["tank", "--count", "1", "--format", output_format]
@@ -399,6 +399,44 @@ class CliTests(unittest.TestCase):
             self._run_monitor(args),
             "used\tcapacity\tcompression_ratio\n800\t0.8\t1.03\n",
         )
+
+    def test_csv_outputs_raw_values_with_one_machine_header(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "csv",
+                "--columns",
+                "pool,used,capacity,compression_ratio",
+            ]
+        )
+
+        self.assertEqual(
+            self._run_monitor(args),
+            "pool,used,capacity,compression_ratio\ntank,800,0.8,1.03\n",
+        )
+
+    def test_csv_quotes_fields_according_to_rfc_4180(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--format", "csv", "--columns", "pool"]
+        )
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: {
+                "pool": 'pool,"quoted"'
+            }
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(output.getvalue(), 'pool\n"pool,""quoted"""\n')
 
     def test_jsonl_outputs_typed_raw_values_without_status(self):
         args = zpool_stats.parse_args(
