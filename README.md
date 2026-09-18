@@ -162,8 +162,8 @@ Column names use the modern names shown by `--list-columns`. The old
   Use `--no-sticky-header` for ordinary streaming output. `--header-every N`
   also selects streaming mode and repeats the heading every N rows; use
   `--header-every 0` to print it once.
-- Interactive status lines are bold green for `ONLINE` and bold red for every
-  other state; headings are bold cyan. `--color auto` is the
+- Interactive status lines are bold green for `ONLINE`, yellow for `DEGRADED`,
+  and red for other states; headings are bold cyan. `--color auto` is the
   default, honors the `NO_COLOR` environment variable, and emits no ANSI color
   when redirected. Use `--color always` or `--color never` to override it.
   CSV, TSV, and JSON Lines never contain terminal styling.
