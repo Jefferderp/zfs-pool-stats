@@ -187,6 +187,127 @@ class TableFormatterTests(unittest.TestCase):
         self.assertEqual(wide.index("1B"), narrow_again.index("1B"))
 
 
+class InteractiveRendererTests(unittest.TestCase):
+    def test_color_auto_follows_tty_and_never_disables_ansi(self):
+        tty = io.StringIO()
+        tty.isatty = lambda: True
+
+        self.assertTrue(zpool_stats.colors_enabled("auto", tty))
+        self.assertFalse(zpool_stats.colors_enabled("never", tty))
+        self.assertTrue(zpool_stats.colors_enabled("always", io.StringIO()))
+
+    def test_status_health_and_header_use_semantic_colors(self):
+        self.assertEqual(
+            zpool_stats.color_status("zpool tank is ONLINE", True),
+            "\x1b[1;32mzpool tank is ONLINE\x1b[0m",
+        )
+        self.assertEqual(
+            zpool_stats.color_status("zpool tank is DEGRADED", True),
+            "\x1b[1;33mzpool tank is DEGRADED\x1b[0m",
+        )
+        self.assertEqual(
+            zpool_stats.color_status("zpool tank is FAULTED", True),
+            "\x1b[1;31mzpool tank is FAULTED\x1b[0m",
+        )
+        self.assertEqual(
+            zpool_stats.color_header("pool  used", True),
+            "\x1b[1;36mpool  used\x1b[0m",
+        )
+
+    def test_sticky_renderer_keeps_header_and_latest_rows_in_viewport(self):
+        output = io.StringIO()
+        output.isatty = lambda: True
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            ["zpool tank is ONLINE"],
+            color=True,
+            terminal_size=lambda: os.terminal_size((80, 5)),
+        )
+
+        for number in range(1, 6):
+            renderer.draw("pool  used", f"tank  {number}G")
+        renderer.close()
+
+        last_frame = output.getvalue().split("\x1b[H")[-1]
+        self.assertIn("\x1b[1;32mzpool tank is ONLINE\x1b[0m", last_frame)
+        self.assertIn("\x1b[1;36mpool  used\x1b[0m", last_frame)
+        self.assertNotIn("tank  2G", last_frame)
+        self.assertIn("tank  3G", last_frame)
+        self.assertIn("tank  4G", last_frame)
+        self.assertIn("tank  5G", last_frame)
+        self.assertTrue(output.getvalue().endswith("\x1b[5;1H\x1b[?25h\n"))
+
+    def test_sticky_renderer_uses_explicit_carriage_returns_between_lines(self):
+        output = io.StringIO()
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            ["status"],
+            color=False,
+            terminal_size=lambda: os.terminal_size((80, 4)),
+        )
+
+        renderer.draw("header", "row")
+
+        frame = output.getvalue()
+        self.assertIn("status\x1b[K\r\nheader\x1b[K\r\nrow", frame)
+
+    def test_sticky_renderer_drops_misaligned_rows_when_header_width_changes(self):
+        output = io.StringIO()
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            [],
+            color=False,
+            terminal_size=lambda: os.terminal_size((80, 5)),
+        )
+
+        renderer.draw("pool  read", "a     1B")
+        renderer.draw("pool             read", "extra-long-pool  1B")
+
+        last_frame = output.getvalue().split("\x1b[H")[-1]
+        self.assertNotIn("a     1B", last_frame)
+        self.assertIn("extra-long-pool  1B", last_frame)
+
+    def test_sticky_renderer_reserves_space_for_data_in_a_short_terminal(self):
+        output = io.StringIO()
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            ["status one", "status two", "status three"],
+            color=False,
+            terminal_size=lambda: os.terminal_size((80, 3)),
+        )
+
+        renderer.draw("pool  read", "tank  1B")
+
+        last_frame = output.getvalue().split("\x1b[H")[-1]
+        self.assertIn("status one", last_frame)
+        self.assertNotIn("status two", last_frame)
+        self.assertIn("pool  read", last_frame)
+        self.assertIn("tank  1B", last_frame)
+
+    def test_sticky_renderer_restores_recent_rows_after_terminal_growth(self):
+        output = io.StringIO()
+        height = 5
+        renderer = zpool_stats.StickyTableRenderer(
+            output,
+            ["status"],
+            color=False,
+            terminal_size=lambda: os.terminal_size((80, height)),
+        )
+
+        renderer.draw("pool", "one")
+        renderer.draw("pool", "two")
+        renderer.draw("pool", "three")
+        height = 3
+        renderer.draw("pool", "four")
+        height = 5
+        renderer.draw("pool", "five")
+
+        last_frame = output.getvalue().split("\x1b[H")[-1]
+        self.assertIn("three", last_frame)
+        self.assertIn("four", last_frame)
+        self.assertIn("five", last_frame)
+
+
 class CollectorTests(unittest.TestCase):
     def test_sample_set_uses_one_iostat_interval_for_all_pools(self):
         commands = []
@@ -796,94 +917,48 @@ raise SystemExit(
         self.assertEqual(args.pool, "tank")
         self.assertEqual(args.count, 1)
 
-    def test_header_interval_uses_current_terminal_height(self):
-        output = io.StringIO()
-        output.isatty = lambda: True
-
-        self.assertEqual(
-            zpool_stats.header_interval(
-                None,
-                output=output,
-                terminal_size=lambda: os.terminal_size((120, 40)),
-            ),
-            39,
-        )
-
-    def test_header_interval_tracks_terminal_resize(self):
-        output = io.StringIO()
-        output.isatty = lambda: True
-        rows = 24
-
-        def terminal_size():
-            return os.terminal_size((80, rows))
-
-        self.assertEqual(
-            zpool_stats.header_interval(
-                None, output=output, terminal_size=terminal_size
-            ),
-            23,
-        )
-        rows = 10
-        self.assertEqual(
-            zpool_stats.header_interval(
-                None, output=output, terminal_size=terminal_size
-            ),
-            9,
-        )
-
-    def test_adaptive_header_repetition_is_disabled_when_redirected(self):
-        self.assertEqual(
-            zpool_stats.header_interval(None, output=io.StringIO()),
-            0,
-        )
-
-    def test_explicit_header_interval_overrides_terminal_height(self):
-        self.assertEqual(
-            zpool_stats.header_interval(7, output=io.StringIO()),
-            7,
-        )
-
-    def test_header_interval_defaults_to_adaptive_mode(self):
+    def test_header_repetition_is_not_configured_by_default(self):
         args = zpool_stats.parse_args(["tank", "--count", "1"])
         self.assertIsNone(args.header_every)
 
-    def test_monitor_rechecks_adaptive_header_interval_each_row(self):
-        args = zpool_stats.parse_args(["tank", "--count", "4", "--no-status"])
-        sample = {
-            "used": 800,
-            "free": 200,
-            "total": 1000,
-            "capacity": 0.8,
-            "read": 300,
-            "write": 400,
-            "fragmentation": 0.48,
-            "compression": 0.03,
-            "snapshots": 60,
-        }
-        interval_calls = 0
+    def test_sticky_header_and_automatic_color_are_defaults(self):
+        args = zpool_stats.parse_args(["tank", "--count", "1"])
 
-        def current_interval(configured):
-            nonlocal interval_calls
-            interval_calls += 1
-            return 2
+        self.assertTrue(args.sticky_header)
+        self.assertEqual(args.color, "auto")
 
+    def test_sticky_header_can_be_disabled(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--no-sticky-header", "--color", "never"]
+        )
+
+        self.assertFalse(args.sticky_header)
+        self.assertEqual(args.color, "never")
+
+    def test_monitor_uses_sticky_colored_header_on_a_tty(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--no-status", "--columns", "pool,read"]
+        )
+        output = io.StringIO()
+        output.isatty = lambda: True
         original_collect = zpool_stats.collect_sample
-        original_interval = zpool_stats.header_interval
         original_require = zpool_stats._require_tools
         try:
-            zpool_stats.collect_sample = lambda pool, interval, **kwargs: sample
-            zpool_stats.header_interval = current_interval
+            zpool_stats.collect_sample = lambda *args, **kwargs: {
+                "pool": "tank",
+                "read": 1024,
+            }
             zpool_stats._require_tools = lambda: None
-            output = io.StringIO()
             with redirect_stdout(output):
                 self.assertEqual(zpool_stats.monitor(args), 0)
         finally:
             zpool_stats.collect_sample = original_collect
-            zpool_stats.header_interval = original_interval
             zpool_stats._require_tools = original_require
 
-        self.assertEqual(interval_calls, 4)
-        self.assertEqual(output.getvalue().count("used"), 2)
+        rendered = output.getvalue()
+        self.assertTrue(rendered.startswith("\x1b[?25l\x1b[H"))
+        self.assertIn("\x1b[1;36mpool  read\x1b[0m", rendered)
+        self.assertTrue(rendered.endswith("\x1b[?25h\n"))
 
     def test_monitor_does_not_repeat_adaptive_header_when_redirected(self):
         args = zpool_stats.parse_args(["tank", "--count", "4", "--no-status"])
@@ -896,6 +971,42 @@ raise SystemExit(
         )
         output = self._run_monitor(args)
         self.assertEqual(output.count("used"), 2)
+
+    def test_header_every_zero_stays_single_when_column_width_expands(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "2",
+                "--no-status",
+                "--header-every",
+                "0",
+                "--columns",
+                "pool,read",
+            ]
+        )
+        samples = iter(
+            [
+                {"pool": "a", "read": 1},
+                {"pool": "extra-long-pool", "read": 1},
+            ]
+        )
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: next(samples)
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+
+        header_lines = [
+            line for line in output.getvalue().splitlines() if line.startswith("pool ")
+        ]
+        self.assertEqual(len(header_lines), 1)
 
     def test_monitor_reprints_header_when_a_column_width_expands(self):
         args = zpool_stats.parse_args(

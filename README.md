@@ -40,7 +40,8 @@ zpool-stats
 ```text
 zpool-stats [POOL | --all] [--interval SECONDS] [--count N] [--columns SPEC]
                    [--format table|csv|tsv|jsonl] [--snapshot-refresh SECONDS]
-                   [--command-timeout SECONDS]
+                   [--command-timeout SECONDS] [--no-sticky-header]
+                   [--color auto|always|never] [--header-every N]
 zpool-stats --list-pools
 ```
 
@@ -55,6 +56,13 @@ zpool-stats --all
 
 # Monitor only one pool
 zpool-stats tank
+
+# Use streaming output instead of the interactive sticky viewport
+zpool-stats tank --no-sticky-header
+
+# Disable color, or force ANSI color through a terminal-aware pager
+zpool-stats tank --color never
+zpool-stats tank --color always | less -R
 
 # Print five sample sets for every imported pool
 zpool-stats --count 5
@@ -139,12 +147,18 @@ Column names use the modern names shown by `--list-columns`. The old
   sampling interval does not consume the command's execution allowance. Change
   the allowance with `--command-timeout SECONDS`.
 - Column widths grow when a longer value appears and never shrink during a run.
-  The header is reprinted whenever widths expand so its alignment remains clear.
-- Output is plain text and works when redirected. In an interactive terminal,
-  the header repeats before the previous header scrolls out of the current
-  terminal height and adapts when the terminal is resized. Automatic repetition
-  is disabled when output is redirected. Use `--header-every N` to set a fixed
-  interval or `--header-every 0` to disable repetition.
+- Interactive table output uses a terminal-sized sticky viewport by default.
+  Pool status lines and the column heading remain fixed at the top while the
+  newest rows fill the available space below. The viewport adapts to terminal
+  resizing and clips lines at the current terminal width to prevent wrapping.
+  Use `--no-sticky-header` for ordinary streaming output. `--header-every N`
+  also selects streaming mode and repeats the heading every N rows; use
+  `--header-every 0` to print it once.
+- Interactive status lines are bold green for `ONLINE`, yellow for `DEGRADED`,
+  and red for other states; headings are bold cyan. `--color auto` is the
+  default, honors the `NO_COLOR` environment variable, and emits no ANSI color
+  when redirected. Use `--color always` or `--color never` to override it.
+  CSV, TSV, and JSON Lines never contain terminal styling.
 - A closed downstream pipe exits silently with status 0. `SIGINT`/`Ctrl-C` and
   `SIGTERM` stop collection without a traceback and return the conventional
   shell statuses 130 and 143. Command and parsing failures print a concise

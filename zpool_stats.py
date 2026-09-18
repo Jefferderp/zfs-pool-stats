@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -28,6 +28,11 @@ TIME_UNITS = (
     ("us", 1_000),
     ("ns", 1),
 )
+ANSI_RESET = "\x1b[0m"
+ANSI_BOLD_GREEN = "\x1b[1;32m"
+ANSI_BOLD_YELLOW = "\x1b[1;33m"
+ANSI_BOLD_RED = "\x1b[1;31m"
+ANSI_BOLD_CYAN = "\x1b[1;36m"
 
 
 class ZfsCommandError(RuntimeError):
@@ -196,20 +201,6 @@ def format_time(value: float, unit: str | None = None, precision: int = 1) -> st
 
 def _column_key(name: str) -> str:
     return name.strip().lower().replace("-", "_")
-
-
-def header_interval(
-    configured: int | None,
-    output=None,
-    terminal_size: Callable[[], os.terminal_size] = shutil.get_terminal_size,
-) -> int:
-    """Return the current number of data rows between printed headers."""
-    if configured is not None:
-        return configured
-    output = sys.stdout if output is None else output
-    if not output.isatty():
-        return 0
-    return max(1, terminal_size().lines - 1)
 
 
 def parse_columns(value: str | None) -> list[Column]:
@@ -588,6 +579,94 @@ class TableFormatter:
         return header, row, expanded
 
 
+def colors_enabled(mode: str, output=None) -> bool:
+    """Resolve an explicit color mode or detect terminal color support."""
+    output = sys.stdout if output is None else output
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return output.isatty() and "NO_COLOR" not in os.environ
+
+
+def color_status(line: str, enabled: bool) -> str:
+    """Color a pool status according to its health state."""
+    if not enabled:
+        return line
+    if " is ONLINE" in line:
+        color = ANSI_BOLD_GREEN
+    elif " is DEGRADED" in line:
+        color = ANSI_BOLD_YELLOW
+    else:
+        color = ANSI_BOLD_RED
+    return f"{color}{line}{ANSI_RESET}"
+
+
+def color_header(line: str, enabled: bool) -> str:
+    """Render table headings in bold cyan when color is enabled."""
+    return f"{ANSI_BOLD_CYAN}{line}{ANSI_RESET}" if enabled else line
+
+
+class StickyTableRenderer:
+    """Redraw a terminal viewport with fixed status and heading rows."""
+
+    def __init__(
+        self,
+        output,
+        status_lines: Sequence[str],
+        *,
+        color: bool,
+        terminal_size: Callable[[], os.terminal_size] = shutil.get_terminal_size,
+    ) -> None:
+        self.output = output
+        self.status_lines = tuple(status_lines)
+        self.color = color
+        self.terminal_size = terminal_size
+        self.rows: list[str] = []
+        self.header: str | None = None
+        self.last_line_count = 0
+        self.started = False
+        self.closed = False
+
+    def draw(self, header: str, row: str) -> None:
+        size = self.terminal_size()
+        width = max(1, size.columns)
+        height = max(1, size.lines)
+        displayed_status_lines = self.status_lines[: max(0, height - 2)]
+        available_rows = max(0, height - len(displayed_status_lines) - 1)
+        if self.header is not None and header != self.header:
+            self.rows.clear()
+        self.header = header
+        self.rows.append(row)
+        if len(self.rows) > 10_000:
+            del self.rows[: len(self.rows) - 10_000]
+
+        visible_status = [
+            color_status(line[:width], self.color) for line in displayed_status_lines
+        ]
+        visible_header = color_header(header[:width], self.color)
+        visible_rows = (
+            [line[:width] for line in self.rows[-available_rows:]]
+            if available_rows
+            else []
+        )
+        lines = [*visible_status, visible_header, *visible_rows]
+        self.last_line_count = len(lines)
+        prefix = "\x1b[?25l\x1b[H" if not self.started else "\x1b[H"
+        frame = "\r\n".join(f"{line}\x1b[K" for line in lines)
+        self.output.write(f"{prefix}{frame}\x1b[J")
+        self.output.flush()
+        self.started = True
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        if self.started:
+            self.output.write(f"\x1b[{self.last_line_count};1H\x1b[?25h\n")
+            self.output.flush()
+        self.closed = True
+
+
 def format_row(
     columns: Sequence[Column], sample: dict[str, int | float | str]
 ) -> tuple[str, str]:
@@ -705,10 +784,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=nonnegative_int,
         default=None,
         metavar="N",
+        help=("disable the sticky header and repeat it every N rows; 0 prints it once"),
+    )
+    parser.add_argument(
+        "--sticky-header",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "repeat the header every N rows; by default use the current terminal "
-            "height, and 0 disables repetition"
+            "keep status and column headings at the top of an interactive "
+            "terminal (default)"
         ),
+    )
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="colorize table status and headings (default: auto)",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     return parser
@@ -760,9 +851,25 @@ def monitor(args: argparse.Namespace) -> int:
     if not pools:
         raise ZfsCommandError("no imported ZFS pools found")
 
+    status_lines = []
     if args.format == "table" and not args.no_status:
-        for pool in pools:
-            print(status_line(pool, command_runner), flush=True)
+        status_lines = [status_line(pool, command_runner) for pool in pools]
+    use_sticky_header = (
+        args.format == "table"
+        and args.sticky_header
+        and args.header_every is None
+        and sys.stdout.isatty()
+    )
+    use_color = args.format == "table" and colors_enabled(args.color)
+    sticky_renderer = (
+        StickyTableRenderer(sys.stdout, status_lines, color=use_color)
+        if use_sticky_header
+        else None
+    )
+    if sticky_renderer is None:
+        for line in status_lines:
+            print(color_status(line, use_color), flush=True)
+
     samples_printed = 0
     rows_since_header = 0
     snapshot_cache = SnapshotCache()
@@ -775,47 +882,56 @@ def monitor(args: argparse.Namespace) -> int:
         )
         delimited_writer.writerow(column.key for column in args.parsed_columns)
         sys.stdout.flush()
-    while args.count == 0 or samples_printed < args.count:
-        samples = collect_sample_set(
-            pools,
-            args.interval,
-            runner=command_runner,
-            columns=args.parsed_columns,
-            snapshot_cache=snapshot_cache,
-            snapshot_refresh=args.snapshot_refresh,
-        )
-        for sample_index, sample in enumerate(samples):
-            _validate_sample(sample)
-            if args.format == "table":
-                assert formatter is not None
-                header, row, widths_expanded = formatter.format(sample)
-                repeat_every = header_interval(args.header_every)
-                if (
-                    samples_printed == 0
-                    and sample_index == 0
-                    or widths_expanded
-                    or (repeat_every and rows_since_header >= repeat_every)
-                ):
-                    print(header)
-                    rows_since_header = 0
-                print(row, flush=True)
-                rows_since_header += 1
-            elif args.format in {"csv", "tsv"}:
-                assert delimited_writer is not None
-                delimited_writer.writerow(
-                    "" if sample.get(column.key) is None else sample[column.key]
-                    for column in args.parsed_columns
-                )
-                sys.stdout.flush()
-            else:
-                record = {
-                    column.key: sample.get(column.key) for column in args.parsed_columns
-                }
-                print(
-                    json.dumps(record, separators=(",", ":"), allow_nan=False),
-                    flush=True,
-                )
-        samples_printed += 1
+
+    try:
+        while args.count == 0 or samples_printed < args.count:
+            samples = collect_sample_set(
+                pools,
+                args.interval,
+                runner=command_runner,
+                columns=args.parsed_columns,
+                snapshot_cache=snapshot_cache,
+                snapshot_refresh=args.snapshot_refresh,
+            )
+            for sample_index, sample in enumerate(samples):
+                _validate_sample(sample)
+                if args.format == "table":
+                    assert formatter is not None
+                    header, row, widths_expanded = formatter.format(sample)
+                    if sticky_renderer is not None:
+                        sticky_renderer.draw(header, row)
+                    else:
+                        repeat_every = args.header_every or 0
+                        if (
+                            samples_printed == 0
+                            and sample_index == 0
+                            or (widths_expanded and args.header_every is None)
+                            or (repeat_every and rows_since_header >= repeat_every)
+                        ):
+                            print(color_header(header, use_color))
+                            rows_since_header = 0
+                        print(row, flush=True)
+                        rows_since_header += 1
+                elif args.format in {"csv", "tsv"}:
+                    assert delimited_writer is not None
+                    delimited_writer.writerow(
+                        "" if sample.get(column.key) is None else sample[column.key]
+                        for column in args.parsed_columns
+                    )
+                    sys.stdout.flush()
+                else:
+                    record = {
+                        column.key: sample.get(column.key)
+                        for column in args.parsed_columns
+                    }
+                    print(
+                        json.dumps(record, separators=(",", ":"), allow_nan=False),
+                        flush=True,
+                    )
+            samples_printed += 1
+    finally:
+        if sticky_renderer is not None:
+            sticky_renderer.close()
     return 0
 
 
