@@ -1,5 +1,8 @@
 # zpool-stats
 
+> [!WARNING]
+> This project is vibe-coded, not production-ready, and largely untested. Use it at your own risk, review the code before running it, and do not rely on it for critical monitoring or operational decisions.
+
 `zpool-stats` is a small, dependency-free terminal monitor for local OpenZFS
 pools. It combines pool I/O, dataset usage, snapshot usage, fragmentation,
 compression, health, and scrub status into one readable stream.
