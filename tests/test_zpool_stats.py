@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import unittest
@@ -71,6 +72,24 @@ config:
         health, detail = zpool_stats.parse_status(output)
         self.assertEqual(health, "ONLINE")
         self.assertTrue(detail.startswith("scan: scrub repaired"))
+
+    def test_run_command_times_out_cleanly(self):
+        with self.assertRaisesRegex(
+            zpool_stats.ZfsCommandError, "timed out after 0.01 seconds"
+        ):
+            zpool_stats.run_command(
+                [sys.executable, "-c", "import time; time.sleep(1)"], timeout=0.01
+            )
+
+    def test_pool_discovery_returns_names_in_zpool_order(self):
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            return "tank\nbackup\n"
+
+        self.assertEqual(zpool_stats.discover_pools(run), ["tank", "backup"])
+        self.assertEqual(commands, [["zpool", "list", "-H", "-o", "name"]])
 
 
 class ColumnTests(unittest.TestCase):
@@ -323,6 +342,40 @@ class CliTests(unittest.TestCase):
                 )
                 self.assertEqual(args.format, output_format)
 
+    def test_list_pools_discovers_pools_without_requiring_zfs(self):
+        required = []
+        calls = []
+
+        def require(commands=("zpool", "zfs")):
+            required.append(tuple(commands))
+
+        def command(command, timeout=None):
+            calls.append((command, timeout))
+            return "tank\nbackup\n"
+
+        original_command = zpool_stats.run_command
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.run_command = command
+            zpool_stats._require_tools = require
+            output = io.StringIO()
+            with redirect_stdout(output):
+                returncode = zpool_stats.main(
+                    ["--list-pools", "--command-timeout", "7"]
+                )
+        finally:
+            zpool_stats.run_command = original_command
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(output.getvalue(), "tank\nbackup\n")
+        self.assertEqual(required, [("zpool",)])
+        self.assertEqual(calls, [(["zpool", "list", "-H", "-o", "name"], 7.0)])
+
+    def test_list_pools_rejects_a_pool_argument(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            zpool_stats.parse_args(["tank", "--list-pools"])
+
     def test_jsonl_rejects_duplicate_column_names(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             zpool_stats.parse_args(
@@ -423,9 +476,92 @@ raise SystemExit(
         self.assertEqual(returncode, 0)
         self.assertEqual(stderr, "")
 
+    def test_signals_use_shell_exit_codes_without_tracebacks(self):
+        code = """
+import sys
+import zpool_stats
+
+zpool_stats._require_tools = lambda: None
+
+def collect(*args, **kwargs):
+    kwargs["runner"]([sys.executable, "-c", "import time; time.sleep(60)"])
+    return {"pool": "tank"}
+
+zpool_stats.collect_sample = collect
+print("ready", flush=True)
+raise SystemExit(
+    zpool_stats.main(
+        ["tank", "--count", "1", "--no-status", "--columns", "pool"]
+    )
+)
+"""
+        for signum, expected in ((signal.SIGINT, 130), (signal.SIGTERM, 143)):
+            with self.subTest(signal=signum):
+                process = subprocess.Popen(
+                    [sys.executable, "-c", code],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                assert process.stdout is not None
+                assert process.stderr is not None
+                self.assertEqual(process.stdout.readline(), "ready\n")
+                os.kill(process.pid, signum)
+                stdout, stderr = process.communicate(timeout=10)
+
+                self.assertEqual(process.returncode, expected)
+                self.assertEqual(stdout, "")
+                self.assertEqual(stderr, "")
+
     def test_snapshot_refresh_defaults_to_sixty_seconds(self):
         args = zpool_stats.parse_args(["tank", "--count", "1"])
         self.assertEqual(args.snapshot_refresh, 60.0)
+
+    def test_command_timeout_defaults_to_thirty_seconds(self):
+        args = zpool_stats.parse_args(["tank", "--count", "1"])
+        self.assertEqual(args.command_timeout, 30.0)
+
+    def test_monitor_adds_sampling_interval_to_iostat_timeout(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--no-status", "--command-timeout", "7"]
+        )
+        observed = []
+        sample = {
+            "used": 800,
+            "free": 200,
+            "total": 1000,
+            "capacity": 0.8,
+            "read": 300,
+            "write": 400,
+            "fragmentation": 0.48,
+            "compression": 0.03,
+            "snapshots": 60,
+        }
+
+        def command(command, timeout=None):
+            observed.append((command, timeout))
+            return ""
+
+        def collect(pool, interval, *, runner, **kwargs):
+            runner(["zfs", "get"])
+            runner(["zpool", "iostat"])
+            return sample
+
+        original_collect = zpool_stats.collect_sample
+        original_command = zpool_stats.run_command
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats.run_command = command
+            zpool_stats._require_tools = lambda: None
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.run_command = original_command
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(observed, [(["zfs", "get"], 7.0), (["zpool", "iostat"], 8.0)])
 
     def test_snapshot_refresh_accepts_zero_to_disable_caching(self):
         args = zpool_stats.parse_args(

@@ -40,6 +40,8 @@ zpool-stats tank
 ```text
 zpool-stats POOL [--interval SECONDS] [--count N] [--columns SPEC]
                  [--format table|tsv|jsonl] [--snapshot-refresh SECONDS]
+                 [--command-timeout SECONDS]
+zpool-stats --list-pools
 ```
 
 Examples:
@@ -67,6 +69,9 @@ zpool-stats tank --format jsonl --columns unix_time,used,free,read,write
 
 # Discover every supported column
 zpool-stats --list-columns
+
+# Discover imported pools available on this host
+zpool-stats --list-pools
 ```
 
 A column specification has the form `NAME[:UNIT[:PRECISION[:HEADER]]]`.
@@ -112,6 +117,10 @@ Column names use the modern names shown by `--list-columns`. The old
   filesystems/volumes. The recursive query is cached for 60 seconds by default
   to limit overhead on large dataset trees. Use `--snapshot-refresh SECONDS` to
   change the cache lifetime, or `--snapshot-refresh 0` to query every sample.
+- Every `zpool` and `zfs` subprocess has a 30-second timeout by default. The
+  requested `zpool iostat` sampling interval is added to that limit, so a long
+  sampling interval does not consume the command's execution allowance. Change
+  the allowance with `--command-timeout SECONDS`.
 - Column widths grow when a longer value appears and never shrink during a run.
   The header is reprinted whenever widths expand so its alignment remains clear.
 - Output is plain text and works when redirected. In an interactive terminal,
@@ -119,9 +128,10 @@ Column names use the modern names shown by `--list-columns`. The old
   terminal height and adapts when the terminal is resized. Automatic repetition
   is disabled when output is redirected. Use `--header-every N` to set a fixed
   interval or `--header-every 0` to disable repetition.
-- A closed downstream pipe exits silently with status 0. `Ctrl-C` exits with
-  status 130. Command and parsing failures print a concise message and exit with
-  status 1 or 2.
+- A closed downstream pipe exits silently with status 0. `SIGINT`/`Ctrl-C` and
+  `SIGTERM` stop collection without a traceback and return the conventional
+  shell statuses 130 and 143. Command and parsing failures print a concise
+  message and exit with status 1 or 2.
 - `compression_ratio` is OpenZFS's `compressratio` value (`1.03x`, for example).
   The shorter `compression` column reports the amount above parity as a
   percentage: `(compressratio - 1) × 100`, so `1.03x` displays as `3%`. It is

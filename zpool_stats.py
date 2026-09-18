@@ -9,13 +9,14 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -30,6 +31,14 @@ TIME_UNITS = (
 
 class ZfsCommandError(RuntimeError):
     """A ZFS command failed or returned output the monitor cannot use."""
+
+
+class SignalExit(Exception):
+    """Request a conventional shell exit status for a received signal."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
 
 
 @dataclasses.dataclass(frozen=True)
@@ -318,15 +327,29 @@ def parse_status(output: str) -> tuple[str, str]:
     return health, detail
 
 
-def run_command(command: Sequence[str]) -> str:
+def run_command(command: Sequence[str], timeout: float | None = None) -> str:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=True, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise ZfsCommandError(f"required command not found: {command[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ZfsCommandError(
+            f"{' '.join(command)}: timed out after {timeout:g} seconds"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "command failed").strip()
         raise ZfsCommandError(f"{' '.join(command)}: {message}") from exc
     return result.stdout
+
+
+def discover_pools(
+    runner: Callable[[Sequence[str]], str] = run_command,
+) -> list[str]:
+    """Return imported pool names in the order reported by OpenZFS."""
+    output = runner(["zpool", "list", "-H", "-o", "name"])
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def collect_sample(
@@ -577,6 +600,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="list available column names and exit",
     )
     parser.add_argument(
+        "--list-pools",
+        action="store_true",
+        help="list imported ZFS pool names and exit",
+    )
+    parser.add_argument(
         "--no-status", action="store_true", help="do not print the pool status line"
     )
     parser.add_argument(
@@ -585,6 +613,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=60.0,
         metavar="SECONDS",
         help="seconds to cache recursive snapshot usage; 0 disables caching (default: 60)",
+    )
+    parser.add_argument(
+        "--command-timeout",
+        type=positive_float,
+        default=30.0,
+        metavar="SECONDS",
+        help=(
+            "maximum runtime for each ZFS command, excluding the requested "
+            "iostat sampling delay (default: 30)"
+        ),
     )
     parser.add_argument(
         "--header-every",
@@ -606,7 +644,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.pool and args.pool_option and args.pool != args.pool_option:
         parser.error("POOL and --pool specify different pools")
     args.pool = args.pool or args.pool_option
-    if not args.list_columns and not args.pool:
+    if args.list_pools and args.pool:
+        parser.error("POOL cannot be used with --list-pools")
+    if not (args.list_columns or args.list_pools) and not args.pool:
         parser.error("a pool name is required")
     try:
         args.parsed_columns = parse_columns(args.columns)
@@ -619,8 +659,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def _require_tools() -> None:
-    missing = [command for command in ("zpool", "zfs") if shutil.which(command) is None]
+def _require_tools(commands: Sequence[str] = ("zpool", "zfs")) -> None:
+    missing = [command for command in commands if shutil.which(command) is None]
     if missing:
         raise ZfsCommandError(f"required command(s) not found: {', '.join(missing)}")
 
@@ -633,8 +673,15 @@ def _validate_sample(sample: dict[str, int | float | str]) -> None:
 
 def monitor(args: argparse.Namespace) -> int:
     _require_tools()
+
+    def command_runner(command: Sequence[str]) -> str:
+        timeout = args.command_timeout
+        if list(command[:2]) == ["zpool", "iostat"]:
+            timeout += args.interval
+        return run_command(command, timeout=timeout)
+
     if args.format == "table" and not args.no_status:
-        print(status_line(args.pool), flush=True)
+        print(status_line(args.pool, command_runner), flush=True)
     printed = 0
     rows_since_header = 0
     snapshot_cache = SnapshotCache()
@@ -647,6 +694,7 @@ def monitor(args: argparse.Namespace) -> int:
         sample = collect_sample(
             args.pool,
             args.interval,
+            runner=command_runner,
             columns=args.parsed_columns,
             snapshot_cache=snapshot_cache,
             snapshot_refresh=args.snapshot_refresh,
@@ -694,11 +742,30 @@ def _discard_stdout() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    previous_handlers = {}
+
+    def handle_signal(signum, _frame) -> None:
+        raise SignalExit(signum)
+
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.signal(signum, handle_signal)
+    except ValueError:
+        # Python only permits signal registration from the main thread.
+        previous_handlers.clear()
     try:
         args = parse_args(argv)
         if args.list_columns:
             for name, (header, kind) in COLUMN_SPECS.items():
                 print(f"{name:<20} {kind:<8} default header: {header}", flush=True)
+            return 0
+        if args.list_pools:
+            _require_tools(("zpool",))
+            pools = discover_pools(
+                lambda command: run_command(command, timeout=args.command_timeout)
+            )
+            for pool in pools:
+                print(pool, flush=True)
             return 0
         return monitor(args)
     except BrokenPipeError:
@@ -707,8 +774,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ZfsCommandError as exc:
         print(f"zpool-stats: error: {exc}", file=sys.stderr)
         return 1
+    except SignalExit as exc:
+        return 128 + exc.signum
     except KeyboardInterrupt:
-        return 130
+        return 128 + signal.SIGINT
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":
