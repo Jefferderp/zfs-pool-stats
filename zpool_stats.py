@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -30,7 +30,6 @@ TIME_UNITS = (
 )
 ANSI_RESET = "\x1b[0m"
 ANSI_BOLD_GREEN = "\x1b[1;32m"
-ANSI_BOLD_YELLOW = "\x1b[1;33m"
 ANSI_BOLD_RED = "\x1b[1;31m"
 ANSI_BOLD_CYAN = "\x1b[1;36m"
 
@@ -593,12 +592,7 @@ def color_status(line: str, enabled: bool) -> str:
     """Color a pool status according to its health state."""
     if not enabled:
         return line
-    if " is ONLINE" in line:
-        color = ANSI_BOLD_GREEN
-    elif " is DEGRADED" in line:
-        color = ANSI_BOLD_YELLOW
-    else:
-        color = ANSI_BOLD_RED
+    color = ANSI_BOLD_GREEN if " is ONLINE" in line else ANSI_BOLD_RED
     return f"{color}{line}{ANSI_RESET}"
 
 

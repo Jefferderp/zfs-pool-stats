@@ -233,7 +233,7 @@ class InteractiveRendererTests(unittest.TestCase):
         frame = output.getvalue().split("\x1b[H")[-1]
         self.assertEqual(frame.count("\x1b[1;36mpool used\x1b[0m"), 1)
         self.assertIn("\x1b[1;32mzpool a is ONLINE\x1b[0m", frame)
-        self.assertIn("\x1b[1;33mzpool b is DEGRADED\x1b[0m", frame)
+        self.assertIn("\x1b[1;31mzpool b is DEGRADED\x1b[0m", frame)
         renderer.draw("pool  used", "a  100", pool="a")
         frame = output.getvalue().split("\x1b[H")[-1]
         self.assertNotIn("b 2", frame)
@@ -295,7 +295,7 @@ class InteractiveRendererTests(unittest.TestCase):
         )
         self.assertEqual(
             zpool_stats.color_status("zpool tank is DEGRADED", True),
-            "\x1b[1;33mzpool tank is DEGRADED\x1b[0m",
+            "\x1b[1;31mzpool tank is DEGRADED\x1b[0m",
         )
         self.assertEqual(
             zpool_stats.color_status("zpool tank is FAULTED", True),
