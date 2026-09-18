@@ -623,7 +623,6 @@ class StickyTableRenderer:
         self.status_lines = tuple(status_lines)
         self.pools = tuple(pools)
         self.pool_rows: dict[str, list[str]] = {pool: [] for pool in pools}
-        self.pool_headers: dict[str, str] = {}
         self.color = color
         self.terminal_size = terminal_size
         self.rows: list[str] = []
@@ -668,37 +667,36 @@ class StickyTableRenderer:
     def draw_pool(self, header: str, row: str, *, pool: str | None) -> None:
         if pool not in self.pool_rows:
             raise ValueError(f"unknown display pool: {pool}")
+        if self.header is not None and self.header != header:
+            for history in self.pool_rows.values():
+                history.clear()
+        self.header = header
         rows = self.pool_rows[pool]
-        if self.pool_headers.get(pool, header) != header:
-            rows.clear()
-        self.pool_headers[pool] = header
         rows.append(row)
         del rows[:-10_000]
         size = self.terminal_size()
         height, width = max(1, size.lines), max(1, size.columns)
-        # If sections cannot fit, show a stable subset rather than rotate pools.
-        visible = self.pools[: max(1, (height + 1) // 3)]
-        budget, remainder = divmod(height - len(visible) + 1, len(visible))
-        lines = []
-        for index, name in enumerate(visible):
-            if index:
-                lines.append("")
-            section_height = budget + (index < remainder)
-            section = []
-            if self.status_lines and section_height >= 3:
-                section.append(
-                    color_status(self.status_lines[index][:width], self.color)
-                )
-            if section_height >= 2:
-                section.append(
-                    color_header(
-                        self.pool_headers.get(name, header)[:width], self.color
-                    )
-                )
-            available = section_height - len(section)
-            section.extend(line[:width] for line in self.pool_rows[name][-available:])
-            section.extend([""] * (section_height - len(section)))
-            lines.extend(section)
+        # Reserve a shared heading, one row per pool, and blank separators.
+        # Drop statuses first on short terminals, then show a stable pool subset.
+        status_budget = max(0, height - 2 * len(self.pools))
+        lines = [
+            color_status(line[:width], self.color)
+            for line in self.status_lines[:status_budget]
+        ]
+        lines.append(color_header(header[:width], self.color))
+        remaining = height - len(lines)
+        visible = self.pools[: (remaining + 1) // 2]
+        if visible:
+            budget, remainder = divmod(remaining - len(visible) + 1, len(visible))
+            for index, name in enumerate(visible):
+                if index:
+                    lines.append("")
+                section_height = budget + (index < remainder)
+                section = [
+                    line[:width] for line in self.pool_rows[name][-section_height:]
+                ]
+                section.extend([""] * (section_height - len(section)))
+                lines.extend(section)
         self.last_line_count = len(lines)
         prefix = "\x1b[?25l\x1b[H" if not self.started else "\x1b[H"
         frame = "\r\n".join(f"{line}\x1b[K" for line in lines)

@@ -151,13 +151,13 @@ Column names use the modern names shown by `--list-columns`. The old
   the allowance with `--command-timeout SECONDS`.
 - Column widths grow when a longer value appears and never shrink during a run.
 - Interactive table output uses a terminal-sized sticky viewport by default.
-  Each pool gets a separate, equally sized section with its own sticky status
-  and column heading, plus an independent rolling sample history. One blank
-  line separates sections; leftover terminal rows go to the first sections.
-  Sections stay in place even while their histories are filling. Resizing
-  redistributes the rows and preserves recent history. Lines are clipped to
-  terminal width to prevent wrapping. Very short sections omit status first;
-  if even headings and one sample per pool cannot fit, only the first pools
+  All pool status lines stay at the top, followed by one shared colored column
+  heading. The remaining rows are divided equally between independent rolling
+  pool histories, separated by one blank line; leftover rows go to the first
+  sections. Sections stay in place even while their histories are filling.
+  Resizing redistributes the rows and preserves recent history. Lines are
+  clipped to terminal width to prevent wrapping. Short terminals omit status
+  lines first; if the shared heading and one sample per pool cannot fit, only the first pools
   are visible until the terminal grows (collection still covers every pool).
   Use `--no-sticky-header` for ordinary streaming output. `--header-every N`
   also selects streaming mode and repeats the heading every N rows; use
