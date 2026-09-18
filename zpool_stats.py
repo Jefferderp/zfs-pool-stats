@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -115,9 +115,18 @@ COLUMN_SPECS = {
     "snapshots": ("snap", "bytes"),
 }
 
-DEFAULT_COLUMNS = (
-    "used,free,total,capacity::0,read,write,fragmentation::0,compression::0,snapshots"
-)
+DEFAULT_COLUMNS = "pool,used,free,total,capacity::0,read,write,fragmentation::0,compression::0,snapshots"
+IOSTAT_KEYS = {
+    "logical_used",
+    "logical_free",
+    "read_ops",
+    "write_ops",
+    "read",
+    "write",
+    "read_wait",
+    "write_wait",
+    "total_wait",
+}
 
 
 def _number(value: str) -> int | float:
@@ -234,7 +243,11 @@ def parse_columns(value: str | None) -> list[Column]:
         columns.append(Column(key, header, kind, unit, precision))
     if not columns:
         raise ValueError("at least one column is required")
-    return columns
+    pool_columns = [column for column in columns if column.key == "pool"]
+    if not pool_columns:
+        default_header, kind = COLUMN_SPECS["pool"]
+        pool_columns = [Column("pool", default_header, kind)]
+    return pool_columns + [column for column in columns if column.key != "pool"]
 
 
 def parse_iostat(output: str, pool: str) -> dict[str, int | float]:
@@ -364,33 +377,29 @@ def collect_sample(
     snapshot_refresh: float = 0,
     clock: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], float] = time.time,
+    iostat_output: str | None = None,
+    wait_for_interval: bool = True,
 ) -> dict[str, int | float | str]:
     requested = (
         set(COLUMN_SPECS) if columns is None else {column.key for column in columns}
     )
     sample: dict[str, int | float | str] = {"pool": pool}
 
-    iostat_keys = {
-        "logical_used",
-        "logical_free",
-        "read_ops",
-        "write_ops",
-        "read",
-        "write",
-        "read_wait",
-        "write_wait",
-        "total_wait",
-    }
-    if requested & iostat_keys:
+    if requested & IOSTAT_KEYS:
+        if iostat_output is None:
+            iostat_output = runner(
+                ["zpool", "iostat", "-Hplvy", pool, str(interval), "1"]
+            )
         iostat = parse_iostat(
-            runner(["zpool", "iostat", "-Hplvy", pool, str(interval), "1"]), pool
+            iostat_output,
+            pool,
         )
         aliases = {"read": "read_bandwidth", "write": "write_bandwidth"}
-        for key in requested & iostat_keys:
+        for key in requested & IOSTAT_KEYS:
             source = aliases.get(key, key)
             if source in iostat:
                 sample[key] = iostat[source]
-    else:
+    elif wait_for_interval:
         sleeper(interval)
 
     property_dependencies = {
@@ -484,6 +493,63 @@ def collect_sample(
     return sample
 
 
+def collect_sample_set(
+    pools: Sequence[str],
+    interval: float,
+    runner: Callable[[Sequence[str]], str] = run_command,
+    *,
+    columns: Sequence[Column] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    snapshot_cache: SnapshotCache | None = None,
+    snapshot_refresh: float = 0,
+    clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
+) -> list[dict[str, int | float | str]]:
+    """Collect one interval-aligned sample for every selected pool."""
+    if len(pools) == 1:
+        return [
+            collect_sample(
+                pools[0],
+                interval,
+                runner=runner,
+                columns=columns,
+                sleeper=sleeper,
+                snapshot_cache=snapshot_cache,
+                snapshot_refresh=snapshot_refresh,
+                clock=clock,
+                wall_clock=wall_clock,
+            )
+        ]
+
+    requested = (
+        set(COLUMN_SPECS) if columns is None else {column.key for column in columns}
+    )
+    iostat_output = None
+    if requested & IOSTAT_KEYS:
+        iostat_output = runner(
+            ["zpool", "iostat", "-Hplvy", *pools, str(interval), "1"]
+        )
+    else:
+        sleeper(interval)
+
+    return [
+        collect_sample(
+            pool,
+            interval,
+            runner=runner,
+            columns=columns,
+            sleeper=sleeper,
+            snapshot_cache=snapshot_cache,
+            snapshot_refresh=snapshot_refresh,
+            clock=clock,
+            wall_clock=wall_clock,
+            iostat_output=iostat_output,
+            wait_for_interval=False,
+        )
+        for pool in pools
+    ]
+
+
 def format_column(column: Column, value: float | str) -> str:
     if column.kind == "bytes":
         return format_bytes(float(value), column.unit, column.precision)
@@ -565,9 +631,11 @@ def nonnegative_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zpool-stats",
-        description="Continuously print useful statistics for one local ZFS pool.",
+        description="Continuously print useful statistics for local ZFS pools.",
     )
-    parser.add_argument("pool", nargs="?", help="pool to monitor")
+    parser.add_argument(
+        "pool", nargs="?", help="pool to monitor; omit to discover all imported pools"
+    )
     parser.add_argument("-p", "--pool", dest="pool_option", help=argparse.SUPPRESS)
     parser.add_argument(
         "-i",
@@ -582,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--count",
         type=nonnegative_int,
         default=0,
-        help="samples to print; 0 means forever (default: 0)",
+        help="sample sets to print for all selected pools; 0 means forever (default: 0)",
     )
     parser.add_argument(
         "-c",
@@ -647,8 +715,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.pool = args.pool or args.pool_option
     if args.list_pools and args.pool:
         parser.error("POOL cannot be used with --list-pools")
-    if not (args.list_columns or args.list_pools) and not args.pool:
-        parser.error("a pool name is required")
     try:
         args.parsed_columns = parse_columns(args.columns)
     except ValueError as exc:
@@ -681,9 +747,14 @@ def monitor(args: argparse.Namespace) -> int:
             timeout += args.interval
         return run_command(command, timeout=timeout)
 
+    pools = [args.pool] if args.pool else discover_pools(command_runner)
+    if not pools:
+        raise ZfsCommandError("no imported ZFS pools found")
+
     if args.format == "table" and not args.no_status:
-        print(status_line(args.pool, command_runner), flush=True)
-    printed = 0
+        for pool in pools:
+            print(status_line(pool, command_runner), flush=True)
+    samples_printed = 0
     rows_since_header = 0
     snapshot_cache = SnapshotCache()
     formatter = TableFormatter(args.parsed_columns) if args.format == "table" else None
@@ -695,46 +766,47 @@ def monitor(args: argparse.Namespace) -> int:
         )
         delimited_writer.writerow(column.key for column in args.parsed_columns)
         sys.stdout.flush()
-    while args.count == 0 or printed < args.count:
-        # The collector uses zpool iostat as the sampling clock when an I/O
-        # column needs it, and sleeps directly when no I/O column is selected.
-        sample = collect_sample(
-            args.pool,
+    while args.count == 0 or samples_printed < args.count:
+        samples = collect_sample_set(
+            pools,
             args.interval,
             runner=command_runner,
             columns=args.parsed_columns,
             snapshot_cache=snapshot_cache,
             snapshot_refresh=args.snapshot_refresh,
         )
-        _validate_sample(sample)
-        if args.format == "table":
-            assert formatter is not None
-            header, row, widths_expanded = formatter.format(sample)
-            repeat_every = header_interval(args.header_every)
-            if (
-                printed == 0
-                or widths_expanded
-                or (repeat_every and rows_since_header >= repeat_every)
-            ):
-                print(header)
-                rows_since_header = 0
-            print(row, flush=True)
-            rows_since_header += 1
-        elif args.format in {"csv", "tsv"}:
-            assert delimited_writer is not None
-            delimited_writer.writerow(
-                "" if sample.get(column.key) is None else sample[column.key]
-                for column in args.parsed_columns
-            )
-            sys.stdout.flush()
-        else:
-            record = {
-                column.key: sample.get(column.key) for column in args.parsed_columns
-            }
-            print(
-                json.dumps(record, separators=(",", ":"), allow_nan=False), flush=True
-            )
-        printed += 1
+        for sample_index, sample in enumerate(samples):
+            _validate_sample(sample)
+            if args.format == "table":
+                assert formatter is not None
+                header, row, widths_expanded = formatter.format(sample)
+                repeat_every = header_interval(args.header_every)
+                if (
+                    samples_printed == 0
+                    and sample_index == 0
+                    or widths_expanded
+                    or (repeat_every and rows_since_header >= repeat_every)
+                ):
+                    print(header)
+                    rows_since_header = 0
+                print(row, flush=True)
+                rows_since_header += 1
+            elif args.format in {"csv", "tsv"}:
+                assert delimited_writer is not None
+                delimited_writer.writerow(
+                    "" if sample.get(column.key) is None else sample[column.key]
+                    for column in args.parsed_columns
+                )
+                sys.stdout.flush()
+            else:
+                record = {
+                    column.key: sample.get(column.key) for column in args.parsed_columns
+                }
+                print(
+                    json.dumps(record, separators=(",", ":"), allow_nan=False),
+                    flush=True,
+                )
+        samples_printed += 1
     return 0
 
 

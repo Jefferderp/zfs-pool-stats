@@ -1,20 +1,20 @@
 # zpool-stats
 
-`zpool-stats` is a small, dependency-free terminal monitor for one local OpenZFS
-pool. It combines pool I/O, dataset usage, snapshot usage, fragmentation,
+`zpool-stats` is a small, dependency-free terminal monitor for local OpenZFS
+pools. It combines pool I/O, dataset usage, snapshot usage, fragmentation,
 compression, health, and scrub status into one readable stream.
 
 ```text
 zpool tank is ONLINE: scan: scrub repaired 0B in 00:10:05 with 0 errors on Sun Sep 13 00:34:06 2026
-used    free  total  cap  read  write  frag  comp  snap
-407.1G  1.4T  1.8T   22%  0B    1.1M    9%   28%   16.5G
+pool  used    free  total  cap  read  write  frag  comp  snap
+tank  407.1G  1.4T  1.8T   22%  0B    1.1M    9%   28%   16.5G
 ```
 
 ## Requirements
 
 - Python 3.10 or newer
 - OpenZFS commands `zpool` and `zfs`
-- Permission to query the selected pool and its datasets
+- Permission to query the imported pools and their datasets
 
 No third-party Python packages are required.
 
@@ -25,33 +25,36 @@ Run directly from a clone:
 ```bash
 git clone https://github.com/Jefferderp/zfs-pool-stats.git
 cd zfs-pool-stats
-./zfs-pool-stats.py tank
+./zfs-pool-stats.py
 ```
 
 Or install the command with `pipx`:
 
 ```bash
 pipx install git+https://github.com/Jefferderp/zfs-pool-stats.git
-zpool-stats tank
+zpool-stats
 ```
 
 ## Usage
 
 ```text
-zpool-stats POOL [--interval SECONDS] [--count N] [--columns SPEC]
-                 [--format table|csv|tsv|jsonl] [--snapshot-refresh SECONDS]
-                 [--command-timeout SECONDS]
+zpool-stats [POOL] [--interval SECONDS] [--count N] [--columns SPEC]
+                   [--format table|csv|tsv|jsonl] [--snapshot-refresh SECONDS]
+                   [--command-timeout SECONDS]
 zpool-stats --list-pools
 ```
 
 Examples:
 
 ```bash
-# Monitor forever at one-second intervals
+# Auto-detect and monitor every imported pool at one-second intervals
+zpool-stats
+
+# Monitor only one pool
 zpool-stats tank
 
-# Print five samples
-zpool-stats tank --count 5
+# Print five sample sets for every imported pool
+zpool-stats --count 5
 
 # Select and customize columns
 zpool-stats tank --columns used:T:2:USED,free:T:2:FREE,read:M:1,write:M:1
@@ -80,10 +83,12 @@ Units apply to byte and time columns only. Byte units are `B`, `K`, `M`, `G`,
 `T`, `P`, `E`, `Z`, and `Y`; time units are `ns`, `us`, `ms`, `s`, `m`, `h`,
 and `d`. Values use powers of 1024, matching raw OpenZFS byte counters.
 
-The default columns are:
+The pool name is always the first column, including when `--columns` omits it.
+An explicitly configured `pool` column is moved to the front while preserving
+its custom header. The default columns are:
 
 ```text
-used,free,total,capacity,read,write,fragmentation,compression,snapshots
+pool,used,free,total,capacity,read,write,fragmentation,compression,snapshots
 ```
 
 `timestamp` is local ISO 8601 time with a numeric UTC offset, such as
@@ -97,8 +102,8 @@ tab-separated records. CSV fields follow standard CSV quoting rules, making the
 stream suitable for spreadsheets and tools such as `csvkit`. `--format jsonl`
 writes one JSON object per record with no header. All machine-readable formats
 automatically omit the human-readable pool status line and use modern column
-names as field names. JSON Lines therefore requires each selected column name
-to be unique.
+names as field names. The first CSV/TSV field or JSON object member is always
+`pool`. JSON Lines therefore requires each selected column name to be unique.
 
 CSV, TSV, and JSON Lines return unformatted source values so consumers do not
 need to strip display units: bytes and nanoseconds are numbers,
@@ -111,11 +116,16 @@ Column names use the modern names shown by `--list-columns`. The old
 
 ## Behavior and caveats
 
-- Collection is local. Use the command on the ZFS host, or invoke it through
-  SSH: `ssh host zpool-stats tank`.
+- Collection is local. With no pool argument, imported pools are discovered at
+  startup using `zpool list` and each sample set emits one row per pool. Pass a
+  pool argument to monitor only that pool. `--count` counts complete sample sets,
+  not individual pool rows.
+- Use the command on the ZFS host, or invoke it through SSH:
+  `ssh host zpool-stats`.
 - Only the commands and ZFS properties needed by the selected columns are
-  queried. `zpool iostat` provides the sampling delay when I/O columns are
-  selected; otherwise the program waits directly between samples.
+  queried. A multi-pool sample set uses one shared `zpool iostat` interval, so
+  adding pools does not multiply the requested sampling delay. When no I/O
+  columns are selected, the program waits once before collecting the set.
 - Snapshot usage is the sum of `usedbysnapshots` for the pool and all descendant
   filesystems/volumes. The recursive query is cached for 60 seconds by default
   to limit overhead on large dataset trees. Use `--snapshot-refresh SECONDS` to

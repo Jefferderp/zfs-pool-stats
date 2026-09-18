@@ -98,18 +98,36 @@ class ColumnTests(unittest.TestCase):
         names = [column.header for column in columns]
         self.assertEqual(
             names,
-            ["used", "free", "total", "cap", "read", "write", "frag", "comp", "snap"],
+            [
+                "pool",
+                "used",
+                "free",
+                "total",
+                "cap",
+                "read",
+                "write",
+                "frag",
+                "comp",
+                "snap",
+            ],
         )
         capacity = next(column for column in columns if column.key == "capacity")
         self.assertEqual(capacity.precision, 0)
 
     def test_modern_names_and_custom_format_are_supported(self):
         columns = zpool_stats.parse_columns("used:T:2:USED,read:M")
-        self.assertEqual(columns[0].key, "used")
-        self.assertEqual(columns[0].unit, "T")
-        self.assertEqual(columns[0].precision, 2)
-        self.assertEqual(columns[0].header, "USED")
-        self.assertEqual(columns[1].key, "read")
+        self.assertEqual(columns[0].key, "pool")
+        self.assertEqual(columns[1].key, "used")
+        self.assertEqual(columns[1].unit, "T")
+        self.assertEqual(columns[1].precision, 2)
+        self.assertEqual(columns[1].header, "USED")
+        self.assertEqual(columns[2].key, "read")
+
+    def test_explicit_pool_column_is_moved_to_the_front_without_duplication(self):
+        columns = zpool_stats.parse_columns("used,pool:::ZPOOL,free")
+
+        self.assertEqual([column.key for column in columns], ["pool", "used", "free"])
+        self.assertEqual(columns[0].header, "ZPOOL")
 
     def test_legacy_column_names_are_rejected(self):
         legacy_names = (
@@ -141,8 +159,12 @@ class ColumnTests(unittest.TestCase):
 
     def test_timestamp_columns_are_supported(self):
         columns = zpool_stats.parse_columns("timestamp,unix_time")
-        self.assertEqual([column.key for column in columns], ["timestamp", "unix_time"])
-        self.assertEqual([column.header for column in columns], ["timestamp", "unix"])
+        self.assertEqual(
+            [column.key for column in columns], ["pool", "timestamp", "unix_time"]
+        )
+        self.assertEqual(
+            [column.header for column in columns], ["pool", "timestamp", "unix"]
+        )
 
     def test_unknown_column_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -166,6 +188,59 @@ class TableFormatterTests(unittest.TestCase):
 
 
 class CollectorTests(unittest.TestCase):
+    def test_sample_set_uses_one_iostat_interval_for_all_pools(self):
+        commands = []
+        sleeps = []
+
+        def run(command):
+            commands.append(command)
+            return "tank\t100\t900\t1\t2\t300\t400\nbackup\t50\t950\t3\t4\t500\t600\n"
+
+        samples = zpool_stats.collect_sample_set(
+            ["tank", "backup"],
+            2.5,
+            run,
+            columns=zpool_stats.parse_columns("read,write"),
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(
+            samples,
+            [
+                {"pool": "tank", "read": 300, "write": 400},
+                {"pool": "backup", "read": 500, "write": 600},
+            ],
+        )
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "zpool",
+                    "iostat",
+                    "-Hplvy",
+                    "tank",
+                    "backup",
+                    "2.5",
+                    "1",
+                ]
+            ],
+        )
+        self.assertEqual(sleeps, [])
+
+    def test_sample_set_without_iostat_sleeps_once_for_all_pools(self):
+        sleeps = []
+
+        samples = zpool_stats.collect_sample_set(
+            ["tank", "backup"],
+            2.5,
+            lambda command: self.fail(f"unexpected command: {command}"),
+            columns=zpool_stats.parse_columns("pool"),
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(samples, [{"pool": "tank"}, {"pool": "backup"}])
+        self.assertEqual(sleeps, [2.5])
+
     def test_non_finite_source_values_are_rejected(self):
         for value in ("nan", "inf", "-inf"):
             with (
@@ -334,6 +409,11 @@ class CollectorTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_pool_argument_is_optional_for_automatic_discovery(self):
+        args = zpool_stats.parse_args(["--count", "1"])
+
+        self.assertIsNone(args.pool)
+
     def test_format_accepts_table_csv_tsv_and_jsonl(self):
         for output_format in ("table", "csv", "tsv", "jsonl"):
             with self.subTest(output_format=output_format):
@@ -397,8 +477,54 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(
             self._run_monitor(args),
-            "used\tcapacity\tcompression_ratio\n800\t0.8\t1.03\n",
+            "pool\tused\tcapacity\tcompression_ratio\ntank\t800\t0.8\t1.03\n",
         )
+
+    def test_monitor_discovers_and_reports_every_pool_each_sample(self):
+        args = zpool_stats.parse_args(
+            ["--count", "2", "--format", "tsv", "--columns", "used"]
+        )
+        collected = []
+
+        def collect(pool, interval, **kwargs):
+            collected.append(pool)
+            return {"pool": pool, "used": 800 if pool == "tank" else 400}
+
+        original_collect = zpool_stats.collect_sample
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats.discover_pools = lambda runner: ["tank", "backup"]
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.discover_pools = original_discover
+            zpool_stats._require_tools = original_require
+
+        self.assertEqual(collected, ["tank", "backup", "tank", "backup"])
+        self.assertEqual(
+            output.getvalue(),
+            "pool\tused\ntank\t800\nbackup\t400\ntank\t800\nbackup\t400\n",
+        )
+
+    def test_monitor_fails_cleanly_when_no_pools_are_imported(self):
+        args = zpool_stats.parse_args(["--count", "1"])
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.discover_pools = lambda runner: []
+            zpool_stats._require_tools = lambda: None
+            with self.assertRaisesRegex(
+                zpool_stats.ZfsCommandError, "no imported ZFS pools"
+            ):
+                zpool_stats.monitor(args)
+        finally:
+            zpool_stats.discover_pools = original_discover
+            zpool_stats._require_tools = original_require
 
     def test_csv_outputs_raw_values_with_one_machine_header(self):
         args = zpool_stats.parse_args(
@@ -522,11 +648,11 @@ import zpool_stats
 zpool_stats._require_tools = lambda: None
 
 def collect(*args, **kwargs):
+    print("ready", flush=True)
     kwargs["runner"]([sys.executable, "-c", "import time; time.sleep(60)"])
     return {"pool": "tank"}
 
 zpool_stats.collect_sample = collect
-print("ready", flush=True)
 raise SystemExit(
     zpool_stats.main(
         ["tank", "--count", "1", "--no-status", "--columns", "pool"]
@@ -804,7 +930,9 @@ raise SystemExit(
             zpool_stats.collect_sample = original_collect
             zpool_stats._require_tools = original_require
 
-        self.assertEqual([column.key for column in received_columns], ["read", "write"])
+        self.assertEqual(
+            [column.key for column in received_columns], ["pool", "read", "write"]
+        )
 
     def test_monitor_collects_exact_requested_count(self):
         args = zpool_stats.parse_args(["tank", "--count", "2", "--no-status"])
