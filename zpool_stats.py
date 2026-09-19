@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.2"
+VERSION = "1.7.3"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -679,26 +679,27 @@ class StickyTableRenderer:
         del rows[:-10_000]
         size = self.terminal_size()
         height, width = max(1, size.lines), max(1, size.columns)
-        # Reserve a shared heading, one row per pool, and blank separators.
-        # Drop statuses first on short terminals, then show a stable pool subset.
+        # Reserve a heading and one row per pool. Drop statuses first on short
+        # terminals, then show a stable pool subset.
         status_budget = max(0, height - 2 * len(self.pools))
         lines = [
             color_status(line[:width], self.color)
             for line in self.status_lines[:status_budget]
         ]
-        lines.append(color_header(header[:width], self.color))
         remaining = height - len(lines)
-        visible = self.pools[: (remaining + 1) // 2]
+        visible_count = min(len(self.pools), max(1, remaining // 2) if remaining else 0)
+        visible = self.pools[:visible_count]
         if visible:
-            budget, remainder = divmod(remaining - len(visible) + 1, len(visible))
+            budget, remainder = divmod(remaining, len(visible))
             for index, name in enumerate(visible):
-                if index:
-                    lines.append("")
                 section_height = budget + (index < remainder)
+                lines.append(color_header(header[:width], self.color))
+                row_count = section_height - 1
                 section = [
-                    line[:width] for line in self.pool_rows[name][-section_height:]
+                    line[:width]
+                    for line in (self.pool_rows[name][-row_count:] if row_count else [])
                 ]
-                section.extend([""] * (section_height - len(section)))
+                section.extend([""] * (row_count - len(section)))
                 lines.extend(section)
         self.last_line_count = len(lines)
         prefix = "\x1b[?25l\x1b[H" if not self.started else "\x1b[H"

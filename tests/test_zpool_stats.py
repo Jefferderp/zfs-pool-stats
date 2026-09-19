@@ -193,7 +193,7 @@ class TableFormatterTests(unittest.TestCase):
 
 
 class InteractiveRendererTests(unittest.TestCase):
-    def test_pool_sections_scroll_independently_with_fixed_blank_separator(self):
+    def test_pool_sections_scroll_independently_with_repeated_headers(self):
         output = io.StringIO()
         renderer = zpool_stats.StickyTableRenderer(
             output,
@@ -217,14 +217,14 @@ class InteractiveRendererTests(unittest.TestCase):
                 "tank 3",
                 "tank 4",
                 "tank 5",
-                "",
+                "pool used",
                 "backup 3",
                 "backup 4",
                 "backup 5",
             ],
         )
 
-    def test_shared_pool_header_preserves_colors_and_clears_old_widths(self):
+    def test_each_pool_header_preserves_colors_and_clears_old_widths(self):
         output = io.StringIO()
         renderer = zpool_stats.StickyTableRenderer(
             output,
@@ -236,7 +236,7 @@ class InteractiveRendererTests(unittest.TestCase):
         renderer.draw("pool used", "a 1", pool="a")
         renderer.draw("pool used", "b 2", pool="b")
         frame = output.getvalue().split("\x1b[H")[-1]
-        self.assertEqual(frame.count("\x1b[1;36mpool used\x1b[0m"), 1)
+        self.assertEqual(frame.count("\x1b[1;36mpool used\x1b[0m"), 2)
         self.assertIn("\x1b[1;32mzpool a is ONLINE\x1b[0m", frame)
         self.assertIn("\x1b[1;33mzpool b is DEGRADED\x1b[0m", frame)
         renderer.draw("pool  used", "a  100", pool="a")
@@ -245,7 +245,7 @@ class InteractiveRendererTests(unittest.TestCase):
         self.assertNotIn("a 1", frame)
         self.assertIn("a  100", frame)
 
-    def test_shared_header_fits_tiny_terminals(self):
+    def test_pool_headers_fit_tiny_terminals(self):
         for height in range(1, 8):
             with self.subTest(height=height):
                 output = io.StringIO()
@@ -259,7 +259,7 @@ class InteractiveRendererTests(unittest.TestCase):
                 renderer.draw("pool used", "a 1", pool="a")
                 renderer.draw("pool used", "b 2", pool="b")
                 frame = output.getvalue().split("\x1b[H")[-1]
-                self.assertEqual(frame.count("pool used"), 1)
+                self.assertLessEqual(frame.count("pool used"), 2)
                 self.assertLessEqual(renderer.last_line_count, height)
 
     def test_pool_sections_resize_preserves_independent_history(self):
