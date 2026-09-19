@@ -96,6 +96,9 @@ A column specification has the form `NAME[:UNIT[:PRECISION[:HEADER]]]`.
 Units apply to byte and time columns only. Byte units are `B`, `K`, `M`, `G`,
 `T`, `P`, `E`, `Z`, and `Y`; time units are `ns`, `us`, `ms`, `s`, `m`, `h`,
 and `d`. Values use powers of 1024, matching raw OpenZFS byte counters.
+With the default precision, byte values at 100 units or more are rounded to the
+nearest whole unit (`688.1G` becomes `688G`; `1000.5G` becomes `1001G`). An
+explicit precision other than one preserves the requested number of decimals.
 
 The pool name is always the first column, including when `--columns` omits it.
 An explicitly configured `pool` column is moved to the front while preserving

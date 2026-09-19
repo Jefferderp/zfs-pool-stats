@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -177,6 +177,9 @@ def format_bytes(value: float, unit: str | None = None, precision: int = 1) -> s
             )
         index = BYTE_UNITS.index(unit)
     scaled = value / (1024**index)
+    if precision == 1 and abs(scaled) >= 100:
+        rounded = int(math.copysign(math.floor(abs(scaled) + 0.5), scaled))
+        return f"{rounded}{unit}"
     if unit == "B" and precision == 1:
         precision = 0
     return f"{scaled:.{precision}f}{unit}"

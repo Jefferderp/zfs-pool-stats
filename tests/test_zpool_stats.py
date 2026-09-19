@@ -12,8 +12,13 @@ import zpool_stats
 
 
 class FormatBytesTests(unittest.TestCase):
-    def test_automatic_binary_scale_keeps_one_decimal(self):
+    def test_automatic_binary_scale_keeps_one_decimal_below_one_hundred(self):
         self.assertEqual(zpool_stats.format_bytes(76.5 * 1024**4), "76.5T")
+
+    def test_automatic_binary_scale_rounds_hundreds_and_thousands_to_whole_units(self):
+        self.assertEqual(zpool_stats.format_bytes(1000.5 * 1024**3), "1001G")
+        self.assertEqual(zpool_stats.format_bytes(688.1 * 1024**3), "688G")
+        self.assertEqual(zpool_stats.format_bytes(192.3 * 1024**4), "192T")
 
     def test_explicit_scale_and_precision(self):
         self.assertEqual(zpool_stats.format_bytes(1536, "K", 2), "1.50K")
