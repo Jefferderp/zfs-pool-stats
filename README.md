@@ -148,7 +148,7 @@ Column names use the modern names shown by `--list-columns`. The old
   filesystems/volumes. The recursive query is cached for 60 seconds by default
   to limit overhead on large dataset trees. Use `--snapshot-refresh SECONDS` to
   change the cache lifetime, or `--snapshot-refresh 0` to query every sample.
-- Every `zpool` and `zfs` subprocess has a 30-second timeout by default. The
+- Every `zpool` and `zfs` subprocess has a 300-second timeout by default. The
   requested `zpool iostat` sampling interval is added to that limit, so a long
   sampling interval does not consume the command's execution allowance. Change
   the allowance with `--command-timeout SECONDS`.

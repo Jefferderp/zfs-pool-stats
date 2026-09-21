@@ -942,9 +942,9 @@ raise SystemExit(
         args = zpool_stats.parse_args(["tank", "--count", "1"])
         self.assertEqual(args.snapshot_refresh, 60.0)
 
-    def test_command_timeout_defaults_to_thirty_seconds(self):
+    def test_command_timeout_defaults_to_three_hundred_seconds(self):
         args = zpool_stats.parse_args(["tank", "--count", "1"])
-        self.assertEqual(args.command_timeout, 30.0)
+        self.assertEqual(args.command_timeout, 300.0)
 
     def test_monitor_adds_sampling_interval_to_iostat_timeout(self):
         args = zpool_stats.parse_args(

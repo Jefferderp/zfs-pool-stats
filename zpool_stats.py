@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.3"
+VERSION = "1.7.4"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -822,11 +822,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--command-timeout",
         type=positive_float,
-        default=30.0,
+        default=300.0,
         metavar="SECONDS",
         help=(
             "maximum runtime for each ZFS command, excluding the requested "
-            "iostat sampling delay (default: 30)"
+            "iostat sampling delay (default: 300)"
         ),
     )
     parser.add_argument(
