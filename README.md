@@ -9,8 +9,8 @@ compression, health, and scrub status into one readable stream.
 
 ```text
 zpool tank is ONLINE: scan: scrub repaired 0B in 00:10:05 with 0 errors on Sun Sep 13 00:34:06 2026
-pool  used    free  total  cap  read  write  frag  comp  snap
-tank  407.1G  1.4T  1.8T   22%  0B    1.1M    9%   28%   16.5G
+pool  free  used    total  cap  read  write  frag  comp  snap
+tank  1.4T  407.1G  1.8T   22%  0B    1.1M    9%   28%   16.5G
 ```
 
 ## Requirements
@@ -105,7 +105,7 @@ An explicitly configured `pool` column is moved to the front while preserving
 its custom header. The default columns are:
 
 ```text
-pool,used,free,total,capacity,read,write,fragmentation,compression,snapshots
+pool,free,used,total,capacity,read,write,fragmentation,compression,snapshots
 ```
 
 `timestamp` is local ISO 8601 time with a numeric UTC offset, such as

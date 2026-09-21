@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.4"
+VERSION = "1.7.5"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -120,7 +120,7 @@ COLUMN_SPECS = {
     "snapshots": ("snap", "bytes"),
 }
 
-DEFAULT_COLUMNS = "pool,used,free,total,capacity::0,read,write,fragmentation::0,compression::0,snapshots"
+DEFAULT_COLUMNS = "pool,free,used,total,capacity::0,read,write,fragmentation::0,compression::0,snapshots"
 IOSTAT_KEYS = {
     "logical_used",
     "logical_free",

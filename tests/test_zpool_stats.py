@@ -105,8 +105,8 @@ class ColumnTests(unittest.TestCase):
             names,
             [
                 "pool",
-                "used",
                 "free",
+                "used",
                 "total",
                 "cap",
                 "read",
