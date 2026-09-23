@@ -119,6 +119,28 @@ class ColumnTests(unittest.TestCase):
         capacity = next(column for column in columns if column.key == "capacity")
         self.assertEqual(capacity.precision, 0)
 
+    def test_percentage_columns_default_to_whole_numbers(self):
+        columns = zpool_stats.parse_columns("capacity,fragmentation,compression")
+        formatter = zpool_stats.TableFormatter(columns)
+        _, row, _ = formatter.format(
+            {
+                "pool": "tank",
+                "capacity": 0.60,
+                "fragmentation": 0.71,
+                "compression": 1.03,
+            }
+        )
+        self.assertEqual([column.precision for column in columns[1:]], [0, 0, 0])
+        self.assertEqual(row.split(), ["tank", "60%", "71%", "103%"])
+
+    def test_explicit_percentage_precision_is_preserved(self):
+        columns = zpool_stats.parse_columns("fragmentation::1,compression::2")
+        formatter = zpool_stats.TableFormatter(columns)
+        _, row, _ = formatter.format(
+            {"pool": "tank", "fragmentation": 0.71, "compression": 1.03}
+        )
+        self.assertEqual(row.split(), ["tank", "71.0%", "103.00%"])
+
     def test_modern_names_and_custom_format_are_supported(self):
         columns = zpool_stats.parse_columns("used:T:2:USED,read:M")
         self.assertEqual(columns[0].key, "pool")

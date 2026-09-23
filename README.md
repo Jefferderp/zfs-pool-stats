@@ -99,6 +99,8 @@ and `d`. Values use powers of 1024, matching raw OpenZFS byte counters.
 With the default precision, byte values at 100 units or more are rounded to the
 nearest whole unit (`688.1G` becomes `688G`; `1000.5G` becomes `1001G`). An
 explicit precision other than one preserves the requested number of decimals.
+Percentage columns display whole numbers by default (`71%`, `103%`); use
+`fragmentation::1` or `compression::1` to request one decimal place.
 
 The pool name is always the first column, including when `--columns` omits it.
 An explicitly configured `pool` column is moved to the front while preserving

@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-VERSION = "1.7.5"
+VERSION = "1.7.6"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -220,7 +220,11 @@ def parse_columns(value: str | None) -> list[Column]:
         default_header, kind = COLUMN_SPECS[key]
         unit = parts[1] or None if len(parts) > 1 else None
         try:
-            precision = int(parts[2]) if len(parts) > 2 and parts[2] else 1
+            precision = (
+                int(parts[2])
+                if len(parts) > 2 and parts[2]
+                else (0 if kind == "percent" else 1)
+            )
         except ValueError as exc:
             raise ValueError(f"invalid precision in column {raw!r}") from exc
         if not 0 <= precision <= 9:
