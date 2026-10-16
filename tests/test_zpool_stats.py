@@ -7,11 +7,28 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
+from unittest.mock import patch
 
 import zpool_stats
 
 
 class FormatBytesTests(unittest.TestCase):
+    def test_decimal_default_and_binary_table_modes(self):
+        columns = zpool_stats.parse_columns("pool,snapshots")
+        sample = {"pool": "tank", "snapshots": 10_000_000_000_000}
+        for flags, expected in [
+            ([], "10.0T"),
+            (["--decimal"], "10.0T"),
+            (["--binary"], "9.1T"),
+        ]:
+            args = zpool_stats.parse_args(flags)
+            row = zpool_stats.TableFormatter(columns, base=args.byte_base).format(
+                sample
+            )[1]
+            self.assertIn(expected, row)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            zpool_stats.parse_args(["--decimal", "--binary"])
+
     def test_automatic_binary_scale_keeps_one_decimal_below_one_hundred(self):
         self.assertEqual(zpool_stats.format_bytes(76.5 * 1024**4), "76.5T")
 
@@ -112,8 +129,11 @@ class ColumnTests(unittest.TestCase):
                 "read",
                 "write",
                 "frag",
-                "comp",
+                "ratio(x)",
                 "snap",
+                "snap_age_s",
+                "age_s",
+                "collect_s",
             ],
         )
         capacity = next(column for column in columns if column.key == "capacity")
@@ -529,6 +549,33 @@ class CollectorTests(unittest.TestCase):
         )
         self.assertEqual(sleeps, [2.5])
 
+    def test_snapshot_query_filters_types_and_sums_descendant_usage(self):
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            return "tank\t10\ntank/files\t20\ntank/volume\t30\n"
+
+        total = zpool_stats.SnapshotCache().get("tank", 60, run)
+
+        self.assertEqual(total, 60)
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "zfs",
+                    "get",
+                    "-Hpr",
+                    "-t",
+                    "filesystem,volume",
+                    "-o",
+                    "name,value",
+                    "usedbysnapshots",
+                    "tank",
+                ]
+            ],
+        )
+
     def test_snapshot_usage_is_cached_until_refresh_interval_expires(self):
         calls = 0
         now = 100.0
@@ -695,7 +742,10 @@ class CliTests(unittest.TestCase):
             zpool_stats._require_tools = original_require
 
         self.assertEqual(collected, ["tank"])
-        self.assertEqual(output.getvalue(), "pool\tused\ntank\t800\n")
+        self.assertEqual(
+            output.getvalue(),
+            "pool\tused\tcollection_status\tunavailable_columns\ntank\t800\tok\t\n",
+        )
 
     def test_format_accepts_table_csv_tsv_and_jsonl(self):
         for output_format in ("table", "csv", "tsv", "jsonl"):
@@ -760,7 +810,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(
             self._run_monitor(args),
-            "pool\tused\tcapacity\tcompression_ratio\ntank\t800\t0.8\t1.03\n",
+            "pool\tused\tcapacity\tcompression_ratio\tcollection_status\tunavailable_columns\ntank\t800\t0.8\t1.03\tok\t\n",
         )
 
     def test_monitor_discovers_and_reports_every_pool_each_sample(self):
@@ -791,7 +841,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(collected, ["tank", "backup", "tank", "backup"])
         self.assertEqual(
             output.getvalue(),
-            "pool\tused\ntank\t800\nbackup\t400\ntank\t800\nbackup\t400\n",
+            "pool\tused\tcollection_status\tunavailable_columns\ntank\t800\tok\t\nbackup\t400\tok\t\ntank\t800\tok\t\nbackup\t400\tok\t\n",
         )
 
     def test_monitor_fails_cleanly_when_no_pools_are_imported(self):
@@ -801,10 +851,12 @@ class CliTests(unittest.TestCase):
         try:
             zpool_stats.discover_pools = lambda runner: []
             zpool_stats._require_tools = lambda: None
-            with self.assertRaisesRegex(
-                zpool_stats.ZfsCommandError, "no imported ZFS pools"
+            with (
+                patch.object(zpool_stats.time, "sleep"),
+                redirect_stdout(io.StringIO()) as output,
             ):
-                zpool_stats.monitor(args)
+                self.assertEqual(zpool_stats.monitor(args), 1)
+            self.assertIn("Waiting for imported ZFS pools", output.getvalue())
         finally:
             zpool_stats.discover_pools = original_discover
             zpool_stats._require_tools = original_require
@@ -824,7 +876,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(
             self._run_monitor(args),
-            "pool,used,capacity,compression_ratio\ntank,800,0.8,1.03\n",
+            "pool,used,capacity,compression_ratio,collection_status,unavailable_columns\ntank,800,0.8,1.03,ok,\n",
         )
 
     def test_csv_quotes_fields_according_to_rfc_4180(self):
@@ -845,7 +897,10 @@ class CliTests(unittest.TestCase):
             zpool_stats.collect_sample = original_collect
             zpool_stats._require_tools = original_require
 
-        self.assertEqual(output.getvalue(), 'pool\n"pool,""quoted"""\n')
+        self.assertEqual(
+            output.getvalue(),
+            'pool,collection_status,unavailable_columns\n"pool,""quoted""",ok,\n',
+        )
 
     def test_jsonl_outputs_typed_raw_values_without_status(self):
         args = zpool_stats.parse_args(
@@ -868,6 +923,8 @@ class CliTests(unittest.TestCase):
                 "used": 800,
                 "capacity": 0.8,
                 "compression_ratio": 1.03,
+                "collection_status": "ok",
+                "unavailable_columns": [],
             },
         )
 
@@ -1063,16 +1120,53 @@ raise SystemExit(
         self.assertFalse(args.sticky_header)
         self.assertEqual(args.color, "never")
 
+    def test_status_refreshes_after_each_sample_in_both_table_modes(self):
+        for tty in (True, False):
+            with self.subTest(tty=tty):
+                args = zpool_stats.parse_args(
+                    ["tank", "--count", "3", "--columns", "pool", "--color", "never"]
+                )
+                output = io.StringIO()
+                output.isatty = lambda tty=tty: tty
+                statuses = iter(
+                    [
+                        "zpool tank is ONLINE: scan: scrub repaired 0B",
+                        "zpool tank is ONLINE: scan: scrub in progress",
+                        "zpool tank is DEGRADED: scan: scrub in progress",
+                        "zpool tank is DEGRADED: scan: scrub in progress",
+                    ]
+                )
+                with (
+                    patch.object(zpool_stats, "_require_tools"),
+                    patch.object(zpool_stats, "status_line", side_effect=statuses),
+                    patch.object(
+                        zpool_stats,
+                        "collect_sample_set",
+                        return_value=[{"pool": "tank"}],
+                    ),
+                    redirect_stdout(output),
+                ):
+                    self.assertEqual(zpool_stats.monitor(args), 0)
+                rendered = output.getvalue()
+                self.assertIn("scrub in progress", rendered)
+                self.assertIn("zpool tank is DEGRADED", rendered)
+                if tty:
+                    frame = rendered.rsplit("\x1b[H", 1)[-1]
+                    self.assertNotIn("scrub repaired", frame)
+                    self.assertIn("zpool tank is DEGRADED", frame)
+                else:
+                    self.assertEqual(rendered.count("zpool tank is DEGRADED"), 1)
+
     def test_monitor_uses_sticky_colored_header_on_a_tty(self):
         args = zpool_stats.parse_args(
             ["tank", "--count", "1", "--no-status", "--columns", "pool,read"]
         )
         output = io.StringIO()
         output.isatty = lambda: True
-        original_collect = zpool_stats.collect_sample
+        original_collect = zpool_stats._collect_sample
         original_require = zpool_stats._require_tools
         try:
-            zpool_stats.collect_sample = lambda *args, **kwargs: {
+            zpool_stats._collect_sample = lambda *args, **kwargs: {
                 "pool": "tank",
                 "read": 1024,
             }
@@ -1080,7 +1174,7 @@ raise SystemExit(
             with redirect_stdout(output):
                 self.assertEqual(zpool_stats.monitor(args), 0)
         finally:
-            zpool_stats.collect_sample = original_collect
+            zpool_stats._collect_sample = original_collect
             zpool_stats._require_tools = original_require
 
         rendered = output.getvalue()

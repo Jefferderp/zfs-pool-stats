@@ -1,0 +1,2 @@
+include verification/*.py
+include verification/README.md
