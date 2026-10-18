@@ -79,6 +79,7 @@ errors: No known data errors
     renderer = z.StickyTableRenderer(
         output,
         [z.status_line("tank", lambda _: fixture)],
+        detailed_status=True,
         color=False,
         pools=["tank"],
         terminal_size=lambda: os.terminal_size((80, 24)),

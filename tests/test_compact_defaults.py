@@ -12,7 +12,7 @@ def test_default_status_is_compact_one_liner():
         ),
         (
             "zpool b is ONLINE: ADVISORY; status: Some supported features are not enabled",
-            "zpool b is ONLINE ADVISORY (Some supported features are not enabled)",
+            "zpool b is ONLINE ADVISORY",
         ),
         ("zpool c is DEGRADED: errors: 2 data errors", None),
     ]:
@@ -45,5 +45,14 @@ def test_compact_status_leaves_room_for_history():
 def test_default_columns_are_compact():
     columns = z.parse_columns(None)
     assert [c.header for c in columns] == [
-        "pool", "free", "used", "total", "cap", "read", "write", "frag", "ratio", "snap"
+        "pool",
+        "free",
+        "used",
+        "total",
+        "cap",
+        "read",
+        "write",
+        "frag",
+        "ratio",
+        "snap",
     ]

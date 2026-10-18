@@ -210,7 +210,18 @@ def test_async_metadata_count_waits_for_status_and_emits_rows():
     output = io.StringIO()
     output.isatty = lambda: True
     args = z.parse_args(
-        ["tank", "-n", "2", "-i", "0.01", "-c", "pool", "--color", "never", "--detailed-status"]
+        [
+            "tank",
+            "-n",
+            "2",
+            "-i",
+            "0.01",
+            "-c",
+            "pool",
+            "--color",
+            "never",
+            "--detailed-status",
+        ]
     )
     with (
         patch.object(z, "_require_tools"),

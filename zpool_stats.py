@@ -26,7 +26,7 @@ from typing import TypeVar
 Value = int | float | str | None
 T = TypeVar("T")
 
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -868,7 +868,7 @@ def compact_status(status: str) -> str:
         if marker in detail and marker not in summary:
             summary += " " + marker
             reason = re.search(r"status:\s*([^;]+)", detail)
-            if reason:
+            if reason and marker == "ATTENTION":
                 text = reason.group(1).strip()
                 summary += f" ({text[:40]}…)" if len(text) > 40 else f" ({text})"
     errors = re.search(r"errors?:\s*([^;]+)", detail)
@@ -1173,7 +1173,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="list imported ZFS pool names and exit",
     )
     parser.add_argument(
-        "--detailed-status", action="store_true",
+        "--detailed-status",
+        action="store_true",
         help="show full pool diagnostics instead of compact status summaries",
     )
     parser.add_argument(
@@ -1403,7 +1404,12 @@ def interactive_monitor(args):
     _require_tools()
     controller = CommandController()
     workers = BoundedWorkers()
-    renderer = StickyTableRenderer(sys.stdout, [], color=colors_enabled(args.color), detailed_status=args.detailed_status)
+    renderer = StickyTableRenderer(
+        sys.stdout,
+        [],
+        color=colors_enabled(args.color),
+        detailed_status=args.detailed_status,
+    )
     formatter = TableFormatter(args.parsed_columns, base=args.byte_base)
     requested = {c.key for c in args.parsed_columns}
     groups = [
@@ -1703,7 +1709,13 @@ def _monitor(args: argparse.Namespace, publish=None) -> int:
     )
     use_color = args.format == "table" and colors_enabled(args.color)
     sticky_renderer = (
-        StickyTableRenderer(sys.stdout, status_lines, color=use_color, pools=pools, detailed_status=args.detailed_status)
+        StickyTableRenderer(
+            sys.stdout,
+            status_lines,
+            color=use_color,
+            pools=pools,
+            detailed_status=args.detailed_status,
+        )
         if use_sticky_header
         else None
     )

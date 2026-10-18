@@ -1,0 +1,38 @@
+{
+  "passed": false,
+  "security_concerns": [],
+  "logic_errors": [
+    {
+      "id": "ASYNC-1",
+      "severity": "high",
+      "location": "zpool_stats.py:1385-1394,1442-1451",
+      "title": "Finite saturation termination still hangs after pools are removed and re-added",
+      "details": "The ordinary saturation case is fixed, but capacity-unavailable synthesis excludes every key present in outstanding even when that entry belongs to a removed generation. Its deadline result is discarded by the generation guard. The replacement operation retains attempts=0 and cannot schedule because all workers remain outstanding; finite_done never becomes true.",
+      "evidence": "Independent subprocess probe timed out after 3 seconds: discover_pools returns ['tank','a','b'], then [], then ['tank','a','b'], then blocks forever; _collect_sample blocks forever. Run interactive_monitor with -n 3 -i 0.01 --pool-refresh 0 --command-timeout 0.3 --no-status -c used. Three metric workers remain from the original generation; the discovery worker eventually blocks. The new same-key metric operations cannot complete or receive capacity-unavailable results. In contrast, the original single-pool five-operation saturation probe exits with status 1 and restores the cursor within a 2-second subprocess deadline.",
+      "recommendation": "When all worker slots are expired, synthesize terminal unavailability for current operations lacking a live current-generation attempt, including keys held by an older outstanding generation. Preserve the outstanding cap and never spawn replacement workers. Add the remove/re-add plus saturated-workers regression."
+    }
+  ],
+  "suggestions": [
+    {
+      "topic": "ASYNC-2 verified fixed",
+      "details": "Successful results clear requested group keys before merging values at lines 1415-1417. The existing regression passes. An independent probe through the real parser and collector supplied 'tank 1 9 1 1 7 8 11 12' then 'tank 1 9 1 1 99 88'; final read was 99, read_wait/write_wait/total_wait were null, and exit status was 0."
+    },
+    {
+      "topic": "ASYNC-3 verified fixed",
+      "details": "Dedicated _command_controller_lock covers initialization/replacement and local-controller capture at lines 423-433. Existing concurrent-first-call regression passes. Independent 12-thread stopped-controller replacement probe created exactly one replacement, all 12 callers used that instance, and all threads completed without errors."
+    },
+    {
+      "topic": "ASYNC-4 verified fixed",
+      "details": "Cleanup under controller.lock removes a completed child only when self.children.get(key) is child (lines 1246-1248). Existing deterministic replacement-during-old-output-close regression passes and confirms the replacement remains tracked for close()."
+    },
+    {
+      "topic": "Release and prior nonasync regression coverage",
+      "details": "Exact command: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider -v tests/test_release_190.py. Result: 21 passed in 3.93s. Includes advisory/action preservation and color, measurement-completion/dynamic-history age, shared measurement age, machine-format failure metadata, snapshot/discovery failure exits, viewport formatting bounds, all visible pool summaries before details, hidden-pool width isolation, zero/subnanosecond formatting, real PTY SIGINT/SIGTERM shutdown, worker recovery, global child cap, and all four new async regressions."
+    },
+    {
+      "topic": "Scope",
+      "details": "Read-only targeted inspection of the four previously reported blockers and tests/test_release_190.py; no unrelated audit, source edits, commits, or deployment. Inline probes disabled bytecode; pytest disabled its cache. Only intentionally created artifact is verification/async-review-final.json. Passing regression tests do not cover the combined removed/readded-and-saturated generation case."
+    }
+  ],
+  "summary": "FAIL final gate: all 21 release regressions pass and ASYNC-2/3/4 are fixed; ASYNC-1 is only partially fixed, with a reproduced finite-run hang when expired old-generation workers occupy re-added pool keys."
+}

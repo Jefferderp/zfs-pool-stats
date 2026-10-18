@@ -1,0 +1,61 @@
+{
+  "passed": false,
+  "security_concerns": [],
+  "logic_errors": [
+    {
+      "id": "ASYNC-1",
+      "severity": "high",
+      "location": "zpool_stats.py:1375-1381,1431-1446",
+      "title": "Finite runs never finish when all workers stall before every operation has been scheduled",
+      "details": "Expired operations correctly remain outstanding to prevent duplicate work, but continue occupying all four scheduling slots. Operations not yet started retain attempts=0 forever, so finite_done never becomes true. One pool with read, used, snapshots, health and the default status operation is already enough to trigger this. Removed/readded operations can suffer the same starvation behind permanently outstanding old generations.",
+      "evidence": "Isolated .venv Python probe patched CommandController.run to threading.Event().wait(), then called interactive_monitor with tank -n 1 -i 0.01 --command-timeout 0.05 -c read,used,snapshots,health. It timed out at the external 2-second limit instead of terminating. The existing never-returning-worker test covers only one operation and passes.",
+      "recommendation": "Retain the outstanding-work cap, but give finite invocations an explicit terminal path when permanently expired workers make remaining attempts impossible; mark unschedulable operations unavailable without spawning replacements and return the appropriate nonzero/partial exit status. Add coverage for more operations than workers and removed/readded pools behind saturated workers."
+    },
+    {
+      "id": "ASYNC-2",
+      "severity": "high",
+      "location": "zpool_stats.py:291-299,573-576,1406-1411",
+      "title": "Missing latency fields retain an old value while acquiring a fresh group timestamp",
+      "details": "parse_iostat accepts a seven-field row without latency fields. _collect_sample then omits requested latency keys, and interactive_monitor merges values into the previous row without clearing the group's keys first. A new read value advances measured[key] while an old read_wait/write_wait/total_wait remains displayed as current.",
+      "evidence": "Real interactive scheduler probe used two successful command responses: 'tank 1 9 1 1 7 8 11 12', then 'tank 1 9 1 1 99 88', with -n 2 --no-status -c read,read_wait,sample_age. Final row had read=99 and stale read_wait=11; _measured_at advanced from 966406.283551731 to 966406.38377217. Exit status was 0.",
+      "recommendation": "Before merging each successful operation, initialize all requested keys in that operation to None, or require _collect_sample to return every requested key explicitly. Add the full-to-short iostat transition test, not only malformed-row exception tests."
+    },
+    {
+      "id": "ASYNC-3",
+      "severity": "medium",
+      "location": "zpool_stats.py:426-430",
+      "title": "Public run_command singleton initialization is not thread-safe",
+      "details": "Concurrent first callers can both observe no controller and construct separate controllers, defeating shared duplicate-command and four-child limits. The same race applies when replacing a stopped controller.",
+      "evidence": "A deterministic two-thread probe placed a barrier inside a CommandController subclass constructor, reset _command_controller=None, and invoked public run_command concurrently for the same command. Two controller instances were constructed and two distinct instances were used.",
+      "recommendation": "Protect lazy initialization/replacement with a dedicated lock or initialize a single controller eagerly. Test simultaneous public API first calls and stopped-controller replacement."
+    },
+    {
+      "id": "ASYNC-4",
+      "severity": "medium",
+      "location": "zpool_stats.py:1211-1226,1240-1245",
+      "title": "Old command cleanup can remove a newer same-key child from tracking",
+      "details": "A completed child's run invocation may still be closing its files while another caller prunes the completed child and starts a replacement under the same command key. The old finally block unconditionally pops the key, removing the replacement. The replacement is then absent from close() cancellation and outstanding/duplicate limits.",
+      "evidence": "A deterministic mocked-Popen/TemporaryFile probe paused the first invocation in output.close(), started a second live child for the same key, and released old cleanup. children changed from length 1 to 0 while the replacement run thread was still alive.",
+      "recommendation": "Remove the entry only if self.children.get(key) is child. Add a same-command overlap test in which the first process has exited but its caller has not finished cleanup."
+    }
+  ],
+  "suggestions": [
+    {
+      "topic": "Verified good paths",
+      "details": "The release-focused suite passed: 14 tests in 2.35 seconds, run through .venv with PYTHONDONTWRITEBYTECODE=1 and pytest cache disabled. A real sleeping subprocess was timed out in 0.045 seconds and controller.close() returned in 0.0 seconds at displayed precision. Existing unreapable-child cap/nonblocking-close coverage passed. Ordinary ValueError callback exceptions are transported as results and do not kill the worker: a subsequent callback returned 42. Short and nonnumeric iostat rows raise ZfsCommandError."
+    },
+    {
+      "topic": "Late pool generation handling",
+      "details": "Static inspection confirms generation identity is checked before applying a result, removed-pool results are ignored, and outstanding entries are retained across reconciliation, preventing replacement work for the same operation until old work completes. These are sound protections against late removed/readded results; saturation/finite termination remains the exception described in ASYNC-1."
+    },
+    {
+      "topic": "Callback contract hardening",
+      "details": "BoundedWorkers catches Exception, not BaseException, and interactive_monitor assumes successful internal results have the expected shape. Current internal callbacks normally satisfy that contract and parser errors are contained. If arbitrary callback injection is intended as a supported extension point, document the contract or validate successful result shapes before mutating UI state."
+    },
+    {
+      "topic": "Review scope and artifact discipline",
+      "details": "Review was limited to CommandController, BoundedWorkers, interactive_monitor, public run_command, and their directly used parsing/freshness paths. Source was not changed. Probes ran as inline Python with bytecode disabled; pytest cache was disabled. The only intentionally written review artifact is verification/async-review.json. No unrelated security audit was performed; no shell-injection or secret finding was identified in the reviewed command path."
+    }
+  ],
+  "summary": "FAIL: targeted release tests pass and bounded cancellation/exception transport largely work, but independent probes reproduce finite-count starvation, stale latency falsely marked fresh, and two concurrency races in the public command execution path."
+}

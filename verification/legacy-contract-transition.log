@@ -1,0 +1,808 @@
+..............F...F....F........................... [ 40%]
+..............................FFF.....F......F.F...F........FF.......F.FFF                                                   [100%]
+=================================== FAILURES ===================================
+_________________ test_command_status_locale_is_deterministic __________________
+
+self = <zpool_stats.CommandController object at 0x7f38d66de490>
+command = ['zpool', 'status', 'tank'], timeout = None
+
+    def run(self, command, timeout=None):
+        key = tuple(command)
+        with self.lock:
+            if self.stop.is_set():
+                raise ZfsCommandError("collection stopped")
+            self.children = {key: child for key, child in self.children.items() if child.poll() is None}
+            if len(self.children) >= 4:
+                raise ZfsCommandError("four commands still outstanding; collection unavailable")
+            previous = self.children.get(key)
+            if previous and previous.poll() is None:
+                raise ZfsCommandError("previous command still outstanding; unavailable")
+            output = tempfile.TemporaryFile()
+            errors = tempfile.TemporaryFile()
+            try:
+>               child = subprocess.Popen(command, stdout=output, stderr=errors,
+                                         start_new_session=True, env={**os.environ, "LC_ALL": "C"})
+
+zpool_stats.py:1220: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: 255 args: ['zpool', 'status', 'tank']>
+args = ['zpool', 'status', 'tank'], executable = b'zpool', preexec_fn = None
+close_fds = True, pass_fds = (), cwd = None
+env = {'SHELL': '/bin/bash', 'HERMES_MEDIA_TRUST_RECENT_FILES': '1', 'PARALLEL_API_KEY': 'Xxw5Y298LtRyf3F4oRnvIg0D6WTAPkChE2B1NfwM', 'TERMINAL_DOCKER_FORWARD_ENV': '[]', ...}
+startupinfo = None, creationflags = 0, shell = False, p2cread = -1
+p2cwrite = -1, c2pread = -1, c2pwrite = 11, errread = -1, errwrite = 12
+restore_signals = True, gid = None, gids = None, uid = None, umask = -1
+start_new_session = True, process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       restore_signals,
+                       gid, gids, uid, umask,
+                       start_new_session, process_group):
+        """Execute program (POSIX version)"""
+    
+        if isinstance(args, (str, bytes)):
+            args = [args]
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = [args]
+        else:
+            args = list(args)
+    
+        if shell:
+            # On Android the default shell is at '/system/bin/sh'.
+            unix_shell = ('/system/bin/sh' if
+                      hasattr(sys, 'getandroidapilevel') else '/bin/sh')
+            args = [unix_shell, "-c"] + args
+            if executable:
+                args[0] = executable
+    
+        if executable is None:
+            executable = args[0]
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        if (_USE_POSIX_SPAWN
+                and os.path.dirname(executable)
+                and preexec_fn is None
+                and (not close_fds or _HAVE_POSIX_SPAWN_CLOSEFROM)
+                and not pass_fds
+                and cwd is None
+                and (p2cread == -1 or p2cread > 2)
+                and (c2pwrite == -1 or c2pwrite > 2)
+                and (errwrite == -1 or errwrite > 2)
+                and not start_new_session
+                and process_group == -1
+                and gid is None
+                and gids is None
+                and uid is None
+                and umask < 0):
+            self._posix_spawn(args, executable, env, restore_signals, close_fds,
+                              p2cread, p2cwrite,
+                              c2pread, c2pwrite,
+                              errread, errwrite)
+            return
+    
+        orig_executable = executable
+    
+        # For transferring possible exec failure from child to parent.
+        # Data format: "exception name:hex errno:description"
+        # Pickle is not used; it is complex and involves memory allocation.
+        errpipe_read, errpipe_write = os.pipe()
+        # errpipe_write must not be in the standard io 0, 1, or 2 fd range.
+        low_fds_to_close = []
+        while errpipe_write < 3:
+            low_fds_to_close.append(errpipe_write)
+            errpipe_write = os.dup(errpipe_write)
+        for low_fd in low_fds_to_close:
+            os.close(low_fd)
+        try:
+            try:
+                # We must avoid complex work that could involve
+                # malloc or free in the child process to avoid
+                # potential deadlocks, thus we do all this here.
+                # and pass it to fork_exec()
+    
+                if env is not None:
+                    env_list = []
+                    for k, v in env.items():
+                        k = os.fsencode(k)
+                        if b'=' in k:
+                            raise ValueError("illegal environment variable name")
+                        env_list.append(k + b'=' + os.fsencode(v))
+                else:
+                    env_list = None  # Use execv instead of execve.
+                executable = os.fsencode(executable)
+                if os.path.dirname(executable):
+                    executable_list = (executable,)
+                else:
+                    # This matches the behavior of os._execvpe().
+                    executable_list = tuple(
+                        os.path.join(os.fsencode(dir), executable)
+                        for dir in os.get_exec_path(env))
+                fds_to_keep = set(pass_fds)
+                fds_to_keep.add(errpipe_write)
+                self.pid = _fork_exec(
+                        args, executable_list,
+                        close_fds, tuple(sorted(map(int, fds_to_keep))),
+                        cwd, env_list,
+                        p2cread, p2cwrite, c2pread, c2pwrite,
+                        errread, errwrite,
+                        errpipe_read, errpipe_write,
+                        restore_signals, start_new_session,
+                        process_group, gid, gids, uid, umask,
+                        preexec_fn, _USE_VFORK)
+                self._child_created = True
+            finally:
+                # be sure the FD is closed no matter what
+                os.close(errpipe_write)
+    
+            self._close_pipe_fds(p2cread, p2cwrite,
+                                 c2pread, c2pwrite,
+                                 errread, errwrite)
+    
+            # Wait for exec to fail or succeed; possibly raising an
+            # exception (limited in size)
+            errpipe_data = bytearray()
+            while True:
+                part = os.read(errpipe_read, 50000)
+                errpipe_data += part
+                if not part or len(errpipe_data) > 50000:
+                    break
+        finally:
+            # be sure the FD is closed no matter what
+            os.close(errpipe_read)
+    
+        if errpipe_data:
+            try:
+                pid, sts = os.waitpid(self.pid, 0)
+                if pid == self.pid:
+                    self._handle_exitstatus(sts)
+                else:
+                    self.returncode = sys.maxsize
+            except ChildProcessError:
+                pass
+    
+            try:
+                exception_name, hex_errno, err_msg = (
+                        errpipe_data.split(b':', 2))
+                # The encoding here should match the encoding
+                # written in by the subprocess implementations
+                # like _posixsubprocess
+                err_msg = err_msg.decode()
+            except ValueError:
+                exception_name = b'SubprocessError'
+                hex_errno = b'0'
+                err_msg = 'Bad exception data from child: {!r}'.format(
+                              bytes(errpipe_data))
+            child_exception_type = getattr(
+                    builtins, exception_name.decode('ascii'),
+                    SubprocessError)
+            if issubclass(child_exception_type, OSError) and hex_errno:
+                errno_num = int(hex_errno, 16)
+                if err_msg == "noexec:chdir":
+                    err_msg = ""
+                    # The error must be from chdir(cwd).
+                    err_filename = cwd
+                elif err_msg == "noexec":
+                    err_msg = ""
+                    err_filename = None
+                else:
+                    err_filename = orig_executable
+                if errno_num != 0:
+                    err_msg = os.strerror(errno_num)
+                if err_filename is not None:
+>                   raise child_exception_type(errno_num, err_msg, err_filename)
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'zpool'
+
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+    def test_command_status_locale_is_deterministic():
+        with patch.object(z.subprocess, "run") as run:
+>           z.run_command(["zpool", "status", "tank"])
+
+tests/test_remediations.py:9: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+zpool_stats.py:430: in run_command
+    return _command_controller.run(command, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <zpool_stats.CommandController object at 0x7f38d66de490>
+command = ['zpool', 'status', 'tank'], timeout = None
+
+    def run(self, command, timeout=None):
+        key = tuple(command)
+        with self.lock:
+            if self.stop.is_set():
+                raise ZfsCommandError("collection stopped")
+            self.children = {key: child for key, child in self.children.items() if child.poll() is None}
+            if len(self.children) >= 4:
+                raise ZfsCommandError("four commands still outstanding; collection unavailable")
+            previous = self.children.get(key)
+            if previous and previous.poll() is None:
+                raise ZfsCommandError("previous command still outstanding; unavailable")
+            output = tempfile.TemporaryFile()
+            errors = tempfile.TemporaryFile()
+            try:
+                child = subprocess.Popen(command, stdout=output, stderr=errors,
+                                         start_new_session=True, env={**os.environ, "LC_ALL": "C"})
+            except OSError as exc:
+                output.close()
+                errors.close()
+>               raise ZfsCommandError(f"{' '.join(command)}: {exc}") from exc
+E               zpool_stats.ZfsCommandError: zpool status tank: [Errno 2] No such file or directory: 'zpool'
+
+zpool_stats.py:1225: ZfsCommandError
+__________ test_display_timing_includes_status_delay_and_snapshot_age __________
+
+capsys = <_pytest.capture.CaptureFixture object at 0x7f38d67e2fd0>
+
+    def test_display_timing_includes_status_delay_and_snapshot_age(capsys):
+        now = [0.0]
+        args = z.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--columns",
+                "pool,collection_duration,sample_age,snapshot_age",
+                "--color",
+                "never",
+            ]
+        )
+    
+        def collect(*a, **kw):
+            now[0] += 10
+            kw["snapshot_cache"].values["tank"] = (now[0], 1)
+            return [
+                {
+                    "pool": "tank",
+                    "snapshot_age": 0,
+                    "collection_duration": 10,
+                    "sample_age": 10,
+                }
+            ]
+    
+        def status(*a):
+            now[0] += 50
+            return "zpool tank is ONLINE"
+    
+        with (
+            patch.object(z, "_require_tools"),
+            patch.object(z.time, "monotonic", side_effect=lambda: now[0]),
+            patch.object(z, "collect_sample_set", side_effect=collect),
+            patch.object(z, "status_line", side_effect=status),
+        ):
+            assert z.monitor(args) == 0
+>       assert capsys.readouterr().out.splitlines()[-1].split() == [
+            "tank",
+            "60.0",
+            "60.0",
+            "50.0",
+        ]
+E       AssertionError: assert ['tank', '60....10.0', '50.0'] == ['tank', '60....60.0', '50.0']
+E         
+E         At index 2 diff: '10.0' != '60.0'
+E         Use -v to get more diff
+
+tests/test_remediations.py:110: AssertionError
+______________ test_single_pool_failed_iostat_is_paced_and_timed _______________
+
+    def test_single_pool_failed_iostat_is_paced_and_timed():
+        now = [0.0]
+    
+        def sleep(delay):
+            now[0] += delay
+    
+        def fail(_):
+            raise z.ZfsCommandError("gone")
+    
+        state = z.RetryState(clock=lambda: now[0])
+        for _ in range(2):
+            row = z.collect_sample(
+                "a",
+                2,
+                fail,
+                columns=z.parse_columns("read,collection_duration,sample_age"),
+                sleeper=sleep,
+                clock=lambda: now[0],
+                retry_state=state,
+            )
+            assert row["collection_duration"] == 2
+>           assert row["sample_age"] == 2
+E           assert None == 2
+
+tests/test_remediations.py:239: AssertionError
+----------------------------- Captured stderr call -----------------------------
+zpool-stats: warning: ('a', ('logical_free', 'logical_used', 'read', 'read_ops', 'read_wait', 'total_wait', 'write', 'write_ops', 'write_wait')): gone; unavailable, retry in 10s
+_________ CliTests.test_csv_outputs_raw_values_with_one_machine_header _________
+
+self = <test_zpool_stats.CliTests testMethod=test_csv_outputs_raw_values_with_one_machine_header>
+
+    def test_csv_outputs_raw_values_with_one_machine_header(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "csv",
+                "--columns",
+                "pool,used,capacity,compression_ratio",
+            ]
+        )
+    
+>       self.assertEqual(
+            self._run_monitor(args),
+            "pool,used,capacity,compression_ratio\ntank,800,0.8,1.03\n",
+        )
+E       AssertionError: 'pool[27 chars]ratio,collection_status,unavailable_columns\nt[18 chars]k,\n' != 'pool[27 chars]ratio\ntank,800,0.8,1.03\n'
+E       - pool,used,capacity,compression_ratio,collection_status,unavailable_columns
+E       + pool,used,capacity,compression_ratio
+E       - tank,800,0.8,1.03,ok,
+E       ?                  ----
+E       + tank,800,0.8,1.03
+
+tests/test_zpool_stats.py:874: AssertionError
+____________ CliTests.test_csv_quotes_fields_according_to_rfc_4180 _____________
+
+self = <test_zpool_stats.CliTests testMethod=test_csv_quotes_fields_according_to_rfc_4180>
+
+    def test_csv_quotes_fields_according_to_rfc_4180(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--format", "csv", "--columns", "pool"]
+        )
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: {
+                "pool": 'pool,"quoted"'
+            }
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats._require_tools = original_require
+    
+>       self.assertEqual(output.getvalue(), 'pool\n"pool,""quoted"""\n')
+E       AssertionError: 'pool,collection_status,unavailable_columns\n"pool,""quoted""",ok,\n' != 'pool\n"pool,""quoted"""\n'
+E       - pool,collection_status,unavailable_columns
+E       + pool
+E       - "pool,""quoted""",ok,
+E       ?                  ----
+E       + "pool,""quoted"""
+
+tests/test_zpool_stats.py:897: AssertionError
+_____ CliTests.test_explicit_pool_does_not_discover_or_collect_other_pools _____
+
+self = <test_zpool_stats.CliTests testMethod=test_explicit_pool_does_not_discover_or_collect_other_pools>
+
+    def test_explicit_pool_does_not_discover_or_collect_other_pools(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--format", "tsv", "--columns", "used"]
+        )
+        collected = []
+    
+        def collect(pool, interval, **kwargs):
+            collected.append(pool)
+            return {"pool": pool, "used": 800}
+    
+        original_collect = zpool_stats.collect_sample
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats.discover_pools = lambda runner: self.fail(
+                "explicit pool must not trigger discovery"
+            )
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.discover_pools = original_discover
+            zpool_stats._require_tools = original_require
+    
+        self.assertEqual(collected, ["tank"])
+>       self.assertEqual(output.getvalue(), "pool\tused\ntank\t800\n")
+E       AssertionError: 'pool\tused\tcollection_status\tunavailable_columns\ntank\t800\tok\t\n' != 'pool\tused\ntank\t800\n'
+E       - pool	used	collection_status	unavailable_columns
+E       + pool	used
+E       - tank	800	ok	
+E       ?     	   ----
+E       + tank	800
+
+tests/test_zpool_stats.py:745: AssertionError
+_________ CliTests.test_jsonl_outputs_typed_raw_values_without_status __________
+
+self = <test_zpool_stats.CliTests testMethod=test_jsonl_outputs_typed_raw_values_without_status>
+
+    def test_jsonl_outputs_typed_raw_values_without_status(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "jsonl",
+                "--columns",
+                "pool,used,capacity,compression_ratio",
+            ]
+        )
+    
+        record = json.loads(self._run_monitor(args))
+>       self.assertEqual(
+            record,
+            {
+                "pool": "tank",
+                "used": 800,
+                "capacity": 0.8,
+                "compression_ratio": 1.03,
+            },
+        )
+E       AssertionError: {'poo[59 chars]o': 1.03, 'collection_status': 'ok', 'unavailable_columns': []} != {'poo[59 chars]o': 1.03}
+E       + {'capacity': 0.8, 'compression_ratio': 1.03, 'pool': 'tank', 'used': 800}
+E       - {'capacity': 0.8,
+E       -  'collection_status': 'ok',
+E       -  'compression_ratio': 1.03,
+E       -  'pool': 'tank',
+E       -  'unavailable_columns': [],
+E       -  'used': 800}
+
+tests/test_zpool_stats.py:913: AssertionError
+______ CliTests.test_monitor_discovers_and_reports_every_pool_each_sample ______
+
+self = <test_zpool_stats.CliTests testMethod=test_monitor_discovers_and_reports_every_pool_each_sample>
+
+    def test_monitor_discovers_and_reports_every_pool_each_sample(self):
+        args = zpool_stats.parse_args(
+            ["--count", "2", "--format", "tsv", "--columns", "used"]
+        )
+        collected = []
+    
+        def collect(pool, interval, **kwargs):
+            collected.append(pool)
+            return {"pool": pool, "used": 800 if pool == "tank" else 400}
+    
+        original_collect = zpool_stats.collect_sample
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = collect
+            zpool_stats.discover_pools = lambda runner: ["tank", "backup"]
+            zpool_stats._require_tools = lambda: None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(zpool_stats.monitor(args), 0)
+        finally:
+            zpool_stats.collect_sample = original_collect
+            zpool_stats.discover_pools = original_discover
+            zpool_stats._require_tools = original_require
+    
+        self.assertEqual(collected, ["tank", "backup", "tank", "backup"])
+>       self.assertEqual(
+            output.getvalue(),
+            "pool\tused\ntank\t800\nbackup\t400\ntank\t800\nbackup\t400\n",
+        )
+E       AssertionError: 'pool\tused\tcollection_status\tunavailable_columns\n[68 chars]\t\n' != 'pool\tused\ntank\t800\nbackup\t400\ntank\t800\nbackup\t400\n'
+E       - pool	used	collection_status	unavailable_columns
+E       + pool	used
+E       - tank	800	ok	
+E       ?     	   ----
+E       + tank	800
+E       - backup	400	ok	
+E       ?       	   ----
+E       + backup	400
+E       - tank	800	ok	
+E       ?     	   ----
+E       + tank	800
+E       - backup	400	ok	
+E       ?       	   ----
+E       + backup	400
+
+tests/test_zpool_stats.py:839: AssertionError
+________ CliTests.test_monitor_fails_cleanly_when_no_pools_are_imported ________
+
+self = <test_zpool_stats.CliTests testMethod=test_monitor_fails_cleanly_when_no_pools_are_imported>
+
+    def test_monitor_fails_cleanly_when_no_pools_are_imported(self):
+        args = zpool_stats.parse_args(["--count", "1"])
+        original_discover = zpool_stats.discover_pools
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.discover_pools = lambda runner: []
+            zpool_stats._require_tools = lambda: None
+            with (
+                patch.object(zpool_stats.time, "sleep"),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+>               self.assertEqual(zpool_stats.monitor(args), 0)
+E               AssertionError: 1 != 0
+
+tests/test_zpool_stats.py:855: AssertionError
+__________ CliTests.test_monitor_uses_sticky_colored_header_on_a_tty ___________
+
+self = <test_zpool_stats.CliTests testMethod=test_monitor_uses_sticky_colored_header_on_a_tty>
+
+    def test_monitor_uses_sticky_colored_header_on_a_tty(self):
+        args = zpool_stats.parse_args(
+            ["tank", "--count", "1", "--no-status", "--columns", "pool,read"]
+        )
+        output = io.StringIO()
+        output.isatty = lambda: True
+        original_collect = zpool_stats.collect_sample
+        original_require = zpool_stats._require_tools
+        try:
+            zpool_stats.collect_sample = lambda *args, **kwargs: {
+                "pool": "tank",
+                "read": 1024,
+            }
+            zpool_stats._require_tools = lambda: None
+            with redirect_stdout(output):
+>               self.assertEqual(zpool_stats.monitor(args), 0)
+E               AssertionError: 1 != 0
+
+tests/test_zpool_stats.py:1167: AssertionError
+_________ CliTests.test_tsv_outputs_raw_values_with_one_machine_header _________
+
+self = <test_zpool_stats.CliTests testMethod=test_tsv_outputs_raw_values_with_one_machine_header>
+
+    def test_tsv_outputs_raw_values_with_one_machine_header(self):
+        args = zpool_stats.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                "tsv",
+                "--columns",
+                "used,capacity,compression_ratio",
+            ]
+        )
+    
+>       self.assertEqual(
+            self._run_monitor(args),
+            "pool\tused\tcapacity\tcompression_ratio\ntank\t800\t0.8\t1.03\n",
+        )
+E       AssertionError: 'pool[31 chars]atio\tcollection_status\tunavailable_columns\n[24 chars]\t\n' != 'pool[31 chars]atio\ntank\t800\t0.8\t1.03\n'
+E       - pool	used	capacity	compression_ratio	collection_status	unavailable_columns
+E       + pool	used	capacity	compression_ratio
+E       - tank	800	0.8	1.03	ok	
+E       ?     	   	   	    ----
+E       + tank	800	0.8	1.03
+
+tests/test_zpool_stats.py:808: AssertionError
+_________________ test_command_permission_error_is_recoverable _________________
+
+    def test_command_permission_error_is_recoverable():
+        with (
+            patch.object(z.subprocess, "run", side_effect=PermissionError("denied")),
+>           pytest.raises(z.ZfsCommandError, match="denied"),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        ):
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'denied'
+E         Actual message: "zfs get: [Errno 2] No such file or directory: 'zfs'"
+
+verification/test_contracts.py:18: AssertionError
+_______ test_shared_collection_timing_includes_shared_io_and_other_pools _______
+
+    def test_shared_collection_timing_includes_shared_io_and_other_pools():
+        now = [0.0]
+    
+        def runner(command):
+            if command[1] == "iostat":
+                now[0] += 10
+                return "a 1 9 1 1 1 1\nb 1 9 1 1 1 1\n"
+            now[0] += 2 if command[-1] == "a" else 3
+            return f"{command[-1]}\tused\t5\n"
+    
+        rows = z.collect_sample_set(
+            ["a", "b"],
+            10,
+            runner,
+            columns=z.parse_columns("read,used,sample_age,collection_duration"),
+            clock=lambda: now[0],
+            sleeper=lambda _: None,
+        )
+        assert now[0] == 15
+        assert all(row["collection_duration"] == 15 for row in rows)
+>       assert all(row["sample_age"] == 15 for row in rows)
+E       assert False
+E        +  where False = all(<generator object test_shared_collection_timing_includes_shared_io_and_other_pools.<locals>.<genexpr> at 0x7f38d65353c0>)
+
+verification/test_contracts.py:155: AssertionError
+_________ test_raw_output_keeps_integer_precision_and_unknowns[jsonl] __________
+
+output_format = 'jsonl'
+
+    @pytest.mark.parametrize("output_format", ["jsonl", "csv", "tsv"])
+    def test_raw_output_keeps_integer_precision_and_unknowns(output_format):
+        integer = 9007199254740993
+        args = z.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                output_format,
+                "--color",
+                "always",
+                "--columns",
+                "used,free",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            patch.object(z, "_require_tools"),
+            patch.object(
+                z,
+                "collect_sample_set",
+                return_value=[
+                    {
+                        "pool": "tank",
+                        "used": integer,
+                        "free": None,
+                    }
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            assert z.monitor(args) == 0
+        text = output.getvalue()
+        assert str(integer) in text
+        assert "\x1b" not in text
+        if output_format == "jsonl":
+>           assert json.loads(text) == {"pool": "tank", "used": integer, "free": None}
+E           AssertionError: assert {'pool': 'tan...partial', ...} == {'pool': 'tan... 'free': None}
+E             
+E             Omitting 3 identical items, use -vv to show
+E             Left contains 2 more items:
+E             {'collection_status': 'partial', 'unavailable_columns': ['free']}
+E             Use -v to get more diff
+
+verification/test_contracts.py:215: AssertionError
+__________ test_raw_output_keeps_integer_precision_and_unknowns[csv] ___________
+
+output_format = 'csv'
+
+    @pytest.mark.parametrize("output_format", ["jsonl", "csv", "tsv"])
+    def test_raw_output_keeps_integer_precision_and_unknowns(output_format):
+        integer = 9007199254740993
+        args = z.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                output_format,
+                "--color",
+                "always",
+                "--columns",
+                "used,free",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            patch.object(z, "_require_tools"),
+            patch.object(
+                z,
+                "collect_sample_set",
+                return_value=[
+                    {
+                        "pool": "tank",
+                        "used": integer,
+                        "free": None,
+                    }
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            assert z.monitor(args) == 0
+        text = output.getvalue()
+        assert str(integer) in text
+        assert "\x1b" not in text
+        if output_format == "jsonl":
+            assert json.loads(text) == {"pool": "tank", "used": integer, "free": None}
+        else:
+            records = list(
+                csv.reader(
+                    io.StringIO(text), delimiter="," if output_format == "csv" else "\t"
+                )
+            )
+>           assert records == [["pool", "used", "free"], ["tank", str(integer), ""]]
+E           AssertionError: assert [['pool', 'us...ial', 'free']] == [['pool', 'us...4740993', '']]
+E             
+E             At index 0 diff: ['pool', 'used', 'free', 'collection_status', 'unavailable_columns'] != ['pool', 'used', 'free']
+E             Use -v to get more diff
+
+verification/test_contracts.py:222: AssertionError
+__________ test_raw_output_keeps_integer_precision_and_unknowns[tsv] ___________
+
+output_format = 'tsv'
+
+    @pytest.mark.parametrize("output_format", ["jsonl", "csv", "tsv"])
+    def test_raw_output_keeps_integer_precision_and_unknowns(output_format):
+        integer = 9007199254740993
+        args = z.parse_args(
+            [
+                "tank",
+                "--count",
+                "1",
+                "--format",
+                output_format,
+                "--color",
+                "always",
+                "--columns",
+                "used,free",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            patch.object(z, "_require_tools"),
+            patch.object(
+                z,
+                "collect_sample_set",
+                return_value=[
+                    {
+                        "pool": "tank",
+                        "used": integer,
+                        "free": None,
+                    }
+                ],
+            ),
+            redirect_stdout(output),
+        ):
+            assert z.monitor(args) == 0
+        text = output.getvalue()
+        assert str(integer) in text
+        assert "\x1b" not in text
+        if output_format == "jsonl":
+            assert json.loads(text) == {"pool": "tank", "used": integer, "free": None}
+        else:
+            records = list(
+                csv.reader(
+                    io.StringIO(text), delimiter="," if output_format == "csv" else "\t"
+                )
+            )
+>           assert records == [["pool", "used", "free"], ["tank", str(integer), ""]]
+E           AssertionError: assert [['pool', 'us...ial', 'free']] == [['pool', 'us...4740993', '']]
+E             
+E             At index 0 diff: ['pool', 'used', 'free', 'collection_status', 'unavailable_columns'] != ['pool', 'used', 'free']
+E             Use -v to get more diff
+
+verification/test_contracts.py:222: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_remediations.py::test_command_status_locale_is_deterministic
+FAILED tests/test_remediations.py::test_display_timing_includes_status_delay_and_snapshot_age
+FAILED tests/test_remediations.py::test_single_pool_failed_iostat_is_paced_and_timed
+FAILED tests/test_zpool_stats.py::CliTests::test_csv_outputs_raw_values_with_one_machine_header
+FAILED tests/test_zpool_stats.py::CliTests::test_csv_quotes_fields_according_to_rfc_4180
+FAILED tests/test_zpool_stats.py::CliTests::test_explicit_pool_does_not_discover_or_collect_other_pools
+FAILED tests/test_zpool_stats.py::CliTests::test_jsonl_outputs_typed_raw_values_without_status
+FAILED tests/test_zpool_stats.py::CliTests::test_monitor_discovers_and_reports_every_pool_each_sample
+FAILED tests/test_zpool_stats.py::CliTests::test_monitor_fails_cleanly_when_no_pools_are_imported
+FAILED tests/test_zpool_stats.py::CliTests::test_monitor_uses_sticky_colored_header_on_a_tty
+FAILED tests/test_zpool_stats.py::CliTests::test_tsv_outputs_raw_values_with_one_machine_header
+FAILED verification/test_contracts.py::test_command_permission_error_is_recoverable
+FAILED verification/test_contracts.py::test_shared_collection_timing_includes_shared_io_and_other_pools
+FAILED verification/test_contracts.py::test_raw_output_keeps_integer_precision_and_unknowns[jsonl]
+FAILED verification/test_contracts.py::test_raw_output_keeps_integer_precision_and_unknowns[csv]
+FAILED verification/test_contracts.py::test_raw_output_keeps_integer_precision_and_unknowns[tsv]
+16 failed, 109 passed, 41 subtests passed in 42.95s

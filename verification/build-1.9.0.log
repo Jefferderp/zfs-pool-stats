@@ -1,0 +1,104 @@
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=77
+* Getting build dependencies for sdist...
+running egg_info
+writing zpool_stats.egg-info/PKG-INFO
+writing dependency_links to zpool_stats.egg-info/dependency_links.txt
+writing entry points to zpool_stats.egg-info/entry_points.txt
+writing top-level names to zpool_stats.egg-info/top_level.txt
+reading manifest file 'zpool_stats.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+adding license file 'LICENSE'
+writing manifest file 'zpool_stats.egg-info/SOURCES.txt'
+* Installed build dependency versions:
+  - setuptools==84.0.0
+* Building sdist...
+running sdist
+running egg_info
+writing zpool_stats.egg-info/PKG-INFO
+writing dependency_links to zpool_stats.egg-info/dependency_links.txt
+writing entry points to zpool_stats.egg-info/entry_points.txt
+writing top-level names to zpool_stats.egg-info/top_level.txt
+reading manifest file 'zpool_stats.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+adding license file 'LICENSE'
+writing manifest file 'zpool_stats.egg-info/SOURCES.txt'
+running check
+creating zpool_stats-1.9.0
+creating zpool_stats-1.9.0/tests
+creating zpool_stats-1.9.0/verification
+creating zpool_stats-1.9.0/zpool_stats.egg-info
+copying files to zpool_stats-1.9.0...
+copying LICENSE -> zpool_stats-1.9.0
+copying MANIFEST.in -> zpool_stats-1.9.0
+copying README.md -> zpool_stats-1.9.0
+copying pyproject.toml -> zpool_stats-1.9.0
+copying zpool_stats.py -> zpool_stats-1.9.0
+copying tests/test_release_190.py -> zpool_stats-1.9.0/tests
+copying tests/test_remediations.py -> zpool_stats-1.9.0/tests
+copying tests/test_zpool_stats.py -> zpool_stats-1.9.0/tests
+copying verification/README.md -> zpool_stats-1.9.0/verification
+copying verification/async_peer_smoke.py -> zpool_stats-1.9.0/verification
+copying verification/cli_smoke.py -> zpool_stats-1.9.0/verification
+copying verification/discovery_smoke.py -> zpool_stats-1.9.0/verification
+copying verification/independent_acceptance.py -> zpool_stats-1.9.0/verification
+copying verification/test_contracts.py -> zpool_stats-1.9.0/verification
+copying zpool_stats.egg-info/PKG-INFO -> zpool_stats-1.9.0/zpool_stats.egg-info
+copying zpool_stats.egg-info/SOURCES.txt -> zpool_stats-1.9.0/zpool_stats.egg-info
+copying zpool_stats.egg-info/dependency_links.txt -> zpool_stats-1.9.0/zpool_stats.egg-info
+copying zpool_stats.egg-info/entry_points.txt -> zpool_stats-1.9.0/zpool_stats.egg-info
+copying zpool_stats.egg-info/top_level.txt -> zpool_stats-1.9.0/zpool_stats.egg-info
+Writing zpool_stats-1.9.0/setup.cfg
+Creating tar archive
+removing 'zpool_stats-1.9.0' (and everything under it)
+* Building wheel from sdist
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=77
+* Getting build dependencies for wheel...
+running egg_info
+writing zpool_stats.egg-info/PKG-INFO
+writing dependency_links to zpool_stats.egg-info/dependency_links.txt
+writing entry points to zpool_stats.egg-info/entry_points.txt
+writing top-level names to zpool_stats.egg-info/top_level.txt
+reading manifest file 'zpool_stats.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+adding license file 'LICENSE'
+writing manifest file 'zpool_stats.egg-info/SOURCES.txt'
+* Installed build dependency versions:
+  - setuptools==84.0.0
+* Building wheel...
+running bdist_wheel
+running build
+running build_py
+creating build/lib
+copying zpool_stats.py -> build/lib
+running egg_info
+writing zpool_stats.egg-info/PKG-INFO
+writing dependency_links to zpool_stats.egg-info/dependency_links.txt
+writing entry points to zpool_stats.egg-info/entry_points.txt
+writing top-level names to zpool_stats.egg-info/top_level.txt
+reading manifest file 'zpool_stats.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+adding license file 'LICENSE'
+writing manifest file 'zpool_stats.egg-info/SOURCES.txt'
+installing to build/bdist.linux-x86_64/wheel
+running install
+running install_lib
+creating build/bdist.linux-x86_64/wheel
+copying build/lib/zpool_stats.py -> build/bdist.linux-x86_64/wheel/.
+running install_egg_info
+Copying zpool_stats.egg-info to build/bdist.linux-x86_64/wheel/./zpool_stats-1.9.0-py3.13.egg-info
+running install_scripts
+creating build/bdist.linux-x86_64/wheel/zpool_stats-1.9.0.dist-info/WHEEL
+creating '/opt/hermes/workspaces/projects/zfs-pool-stats/dist/.tmp-dd2zdlow/zpool_stats-1.9.0-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+adding 'zpool_stats.py'
+adding 'zpool_stats-1.9.0.dist-info/licenses/LICENSE'
+adding 'zpool_stats-1.9.0.dist-info/METADATA'
+adding 'zpool_stats-1.9.0.dist-info/WHEEL'
+adding 'zpool_stats-1.9.0.dist-info/entry_points.txt'
+adding 'zpool_stats-1.9.0.dist-info/top_level.txt'
+adding 'zpool_stats-1.9.0.dist-info/RECORD'
+removing build/bdist.linux-x86_64/wheel
+Successfully built zpool_stats-1.9.0.tar.gz and zpool_stats-1.9.0-py3-none-any.whl
