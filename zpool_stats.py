@@ -26,7 +26,7 @@ from typing import TypeVar
 Value = int | float | str | None
 T = TypeVar("T")
 
-VERSION = "1.9.2"
+VERSION = "1.9.3"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -866,7 +866,7 @@ def compact_status(status: str) -> str:
     serious = health not in {"ONLINE"} or "UNAVAILABLE" in summary
     for marker in ("ATTENTION", "ADVISORY"):
         if marker in detail and marker not in summary:
-            summary += " " + marker
+            summary += f" with {marker}" if summary.endswith("ONLINE") else f" {marker}"
             reason = re.search(r"status:\s*([^;]+)", detail)
             if reason and marker == "ATTENTION":
                 text = reason.group(1).strip()
@@ -1005,8 +1005,12 @@ class StickyTableRenderer:
             )
             summary, _, detail = status.partition(":")
             for marker in ("ATTENTION", "ADVISORY"):
-                if marker in detail:
-                    summary += " " + marker
+                if marker in detail and marker not in summary:
+                    summary += (
+                        f" with {marker}"
+                        if summary.endswith("ONLINE")
+                        else f" {marker}"
+                    )
             colored = color_status(status, self.color)
             prefix = (
                 colored[: len(colored) - len(status) - len(ANSI_RESET)]

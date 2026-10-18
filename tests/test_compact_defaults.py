@@ -12,7 +12,7 @@ def test_default_status_is_compact_one_liner():
         ),
         (
             "zpool b is ONLINE: ADVISORY; status: Some supported features are not enabled",
-            "zpool b is ONLINE ADVISORY",
+            "zpool b is ONLINE with ADVISORY",
         ),
         ("zpool c is DEGRADED: errors: 2 data errors", None),
     ]:
