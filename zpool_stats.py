@@ -10,6 +10,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -25,7 +26,7 @@ from typing import TypeVar
 Value = int | float | str | None
 T = TypeVar("T")
 
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 BYTE_UNITS = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
 TIME_UNITS = (
     ("d", 86_400_000_000_000),
@@ -135,7 +136,7 @@ COLUMN_SPECS = {
     "collection_duration": ("collect_s", "number"),
 }
 
-DEFAULT_COLUMNS = "pool,free,used,total,capacity::0,read,write,fragmentation::0,compression_ratio::2,snapshots,snapshot_age,sample_age,collection_duration"
+DEFAULT_COLUMNS = "pool,free,used,total,capacity::0,read,write,fragmentation::0,compression_ratio::2:ratio,snapshots"
 IOSTAT_KEYS = {
     "logical_used",
     "logical_free",
@@ -858,6 +859,35 @@ def wrapped_status(lines: Sequence[str], width: int, color: bool) -> list[str]:
     return result
 
 
+def compact_status(status: str) -> str:
+    """Keep health, scan progress, and notable problems on one line."""
+    summary, _, detail = status.partition(":")
+    health = summary.rsplit(" is ", 1)[-1]
+    serious = health not in {"ONLINE"} or "UNAVAILABLE" in summary
+    for marker in ("ATTENTION", "ADVISORY"):
+        if marker in detail and marker not in summary:
+            summary += " " + marker
+            reason = re.search(r"status:\s*([^;]+)", detail)
+            if reason:
+                text = reason.group(1).strip()
+                summary += f" ({text[:40]}…)" if len(text) > 40 else f" ({text})"
+    errors = re.search(r"errors?:\s*([^;]+)", detail)
+    if errors and errors.group(1).strip() != "No known data errors":
+        serious = True
+    if serious and detail.strip():
+        return f"{summary}: {detail.strip()}" if ":" not in summary else status
+    scan = re.search(r"scan:\s*([^;]+)", detail)
+    if scan:
+        text = scan.group(1).strip()
+        if "in progress" in text:
+            text = text.split(" in progress", 1)[0] + " in progress"
+            progress = re.search(r"[\d.]+% done[^;]*", detail)
+            if progress:
+                text += ", " + progress.group(0)
+        summary += ": " + text
+    return summary
+
+
 class StickyTableRenderer:
     """Redraw a terminal viewport with fixed status and heading rows."""
 
@@ -869,7 +899,9 @@ class StickyTableRenderer:
         color: bool,
         pools: Sequence[str] = (),
         terminal_size: Callable[[], os.terminal_size] = shutil.get_terminal_size,
+        detailed_status: bool = False,
     ) -> None:
+        self.detailed_status = detailed_status
         self.output = output
         self.status_lines = tuple(status_lines)
         self.pools = tuple(pools)
@@ -985,11 +1017,15 @@ class StickyTableRenderer:
             def tint(text, prefix=prefix):
                 return f"{prefix}{text}{ANSI_RESET}" if self.color else text
 
+            if not self.detailed_status:
+                summary = compact_status(status)
             summaries.append(tint(summary[:width]))
-            for paragraph in detail.split(";"):
-                details.extend(
-                    tint(part) for part in textwrap.wrap(paragraph.strip(), width)
-                )
+            if self.detailed_status:
+                for paragraph in detail.split(";"):
+                    details.extend(
+                        tint(part)
+                        for part in textwrap.wrap(f"{name}: {paragraph.strip()}", width)
+                    )
         detail_budget = max(0, height - len(summaries) - 2 * len(visible))
         lines = summaries[:height] + details[:detail_budget]
         remaining = max(0, height - len(lines))
@@ -1135,6 +1171,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-pools",
         action="store_true",
         help="list imported ZFS pool names and exit",
+    )
+    parser.add_argument(
+        "--detailed-status", action="store_true",
+        help="show full pool diagnostics instead of compact status summaries",
     )
     parser.add_argument(
         "--no-status", action="store_true", help="do not print the pool status line"
@@ -1363,7 +1403,7 @@ def interactive_monitor(args):
     _require_tools()
     controller = CommandController()
     workers = BoundedWorkers()
-    renderer = StickyTableRenderer(sys.stdout, [], color=colors_enabled(args.color))
+    renderer = StickyTableRenderer(sys.stdout, [], color=colors_enabled(args.color), detailed_status=args.detailed_status)
     formatter = TableFormatter(args.parsed_columns, base=args.byte_base)
     requested = {c.key for c in args.parsed_columns}
     groups = [
@@ -1663,13 +1703,14 @@ def _monitor(args: argparse.Namespace, publish=None) -> int:
     )
     use_color = args.format == "table" and colors_enabled(args.color)
     sticky_renderer = (
-        StickyTableRenderer(sys.stdout, status_lines, color=use_color, pools=pools)
+        StickyTableRenderer(sys.stdout, status_lines, color=use_color, pools=pools, detailed_status=args.detailed_status)
         if use_sticky_header
         else None
     )
     if sticky_renderer is None and not publish:
         for line in status_lines:
-            print(color_status(line, use_color), flush=True)
+            shown = line if args.detailed_status else compact_status(line)
+            print(color_status(shown, use_color), flush=True)
 
     samples_printed = 0
     any_metric_success = False

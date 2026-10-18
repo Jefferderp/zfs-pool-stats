@@ -129,11 +129,8 @@ class ColumnTests(unittest.TestCase):
                 "read",
                 "write",
                 "frag",
-                "ratio(x)",
+                "ratio",
                 "snap",
-                "snap_age_s",
-                "age_s",
-                "collect_s",
             ],
         )
         capacity = next(column for column in columns if column.key == "capacity")

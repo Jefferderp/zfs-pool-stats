@@ -106,6 +106,7 @@ def test_every_visible_pool_summary_precedes_long_details():
     renderer = z.StickyTableRenderer(
         out,
         ["zpool a is ONLINE: " + "long " * 100, "zpool b is FAULTED: broken"],
+        detailed_status=True,
         color=False,
         pools=["a", "b"],
         terminal_size=lambda: os.terminal_size((40, 10)),
@@ -209,7 +210,7 @@ def test_async_metadata_count_waits_for_status_and_emits_rows():
     output = io.StringIO()
     output.isatty = lambda: True
     args = z.parse_args(
-        ["tank", "-n", "2", "-i", "0.01", "-c", "pool", "--color", "never"]
+        ["tank", "-n", "2", "-i", "0.01", "-c", "pool", "--color", "never", "--detailed-status"]
     )
     with (
         patch.object(z, "_require_tools"),

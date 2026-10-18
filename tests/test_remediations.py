@@ -61,15 +61,11 @@ def test_first_header_after_empty_inventory(capsys):
 
 
 def test_release_defaults_use_honest_ratio_and_visible_freshness():
-    assert z.VERSION == "1.9.0"
+    assert z.VERSION == "1.9.1"
     columns = z.parse_columns(None)
     keys = {c.key for c in columns}
-    assert {
-        "compression_ratio",
-        "snapshot_age",
-        "sample_age",
-        "collection_duration",
-    } <= keys
+    assert "compression_ratio" in keys
+    assert not {"snapshot_age", "sample_age", "collection_duration"} & keys
     assert "compression" not in keys
     ratio = next(c for c in columns if c.key == "compression_ratio")
     assert z.format_column(ratio, 1.03) == "1.03x"
